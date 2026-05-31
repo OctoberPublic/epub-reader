@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <!-- 全画面・ノッチ回避: viewport-fit=cover + safe-area-inset。ピンチズーム無効 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no, maximum-scale=1" />
+  <title>EPUB Reader</title>
+
+  <!-- iOS: ホーム画面追加で全画面スタンドアロン表示 -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="EPUB" />
+  <meta name="theme-color" content="#121212" />
+
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./assets/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="./assets/icon.svg" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <!-- ライブラリ画面（本棚） -->
+  <section id="library-view" class="screen">
+    <header class="lib-header">
+      <h1>ライブラリ</h1>
+      <button id="import-button" class="icon-button" aria-label="本を追加" title="本を追加">＋</button>
+    </header>
+    <div id="book-grid" class="book-grid"></div>
+    <div id="library-empty" class="empty-state" hidden>
+      <p>まだ本がありません。</p>
+      <button id="import-button-empty" class="primary-button">EPUB を追加</button>
+    </div>
+    <div id="storage-hint" class="storage-hint" hidden></div>
+  </section>
+
+  <!-- リーダー画面（foliate-view は readerView.js が挿入） -->
+  <section id="reader-view" class="screen" hidden>
+    <div id="reader-surface" class="reader-surface"></div>
+
+    <header id="reader-header" class="reader-overlay reader-header">
+      <button id="reader-back" class="icon-button" aria-label="戻る" title="戻る">‹</button>
+      <span id="reader-title" class="reader-title"></span>
+    </header>
+
+    <footer id="reader-footer" class="reader-overlay reader-footer">
+      <div class="reader-toolbar">
+        <button id="toc-button" class="icon-button" aria-label="目次" title="目次">≡</button>
+        <span id="progress-label" class="progress-label"></span>
+        <button id="settings-button" class="icon-button" aria-label="表示設定" title="表示設定">Aa</button>
+      </div>
+      <input id="progress-slider" class="progress-slider" type="range" min="0" max="1" step="0.0001" value="0" />
+    </footer>
+  </section>
+
+  <!-- 目次ドロワー -->
+  <aside id="toc-panel" class="drawer" hidden>
+    <div class="drawer-header">
+      <span>目次</span>
+      <button id="toc-close" class="icon-button" aria-label="閉じる">×</button>
+    </div>
+    <nav id="toc-list" class="toc-list"></nav>
+  </aside>
+
+  <!-- 表示設定ドロワー -->
+  <aside id="settings-panel" class="drawer" hidden>
+    <div class="drawer-header">
+      <span>表示設定</span>
+      <button id="settings-close" class="icon-button" aria-label="閉じる">×</button>
+    </div>
+    <div id="settings-body" class="settings-body"></div>
+  </aside>
+
+  <div id="scrim" class="scrim" hidden></div>
+  <div id="toast" class="toast" hidden></div>
+
+  <input id="file-input" type="file" accept=".epub,application/epub+zip" hidden />
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

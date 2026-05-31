@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="EPUB Reader">
+  <!-- maskable: 端まで背景を塗り、中央の安全領域(約80%)にだけ図柄を置く -->
+  <rect width="512" height="512" fill="#1f2933"/>
+  <g transform="translate(140 128) scale(0.72)">
+    <rect x="20" y="16" width="280" height="312" rx="14" fill="#f4ecd8"/>
+    <rect x="20" y="16" width="26" height="312" rx="8" fill="#e6dcc2"/>
+    <g fill="#7a6a4f">
+      <rect x="74" y="64"  width="180" height="14" rx="7"/>
+      <rect x="74" y="104" width="180" height="14" rx="7"/>
+      <rect x="74" y="144" width="180" height="14" rx="7"/>
+      <rect x="74" y="184" width="140" height="14" rx="7"/>
+      <rect x="74" y="224" width="180" height="14" rx="7"/>
+      <rect x="74" y="264" width="110" height="14" rx="7"/>
+    </g>
+  </g>
+</svg>
