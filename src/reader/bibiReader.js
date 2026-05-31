@@ -8,8 +8,9 @@
 // また iPad のウィンドウ可変(Stage Manager/Split View)に追従するため、ResizeObserver で
 // iframe のサイズ変化を監視し、Bibi に再レイアウト用イベントを送る。
 // 縦書き小説(reflowable)のページ送りは Bibi が #bibi-main のスクロール位置を一発代入する
-// ため瞬時に切り替わる。これを滑らかにするため、親から #bibi-main に scroll-behavior:smooth
-// を当てる(マンガ=pre-paginated はスクロールを使わない別方式なので無影響)。
+// (この本では縦スクロール)ため瞬時に切り替わる。これを横スライド演出にするため、スクロールは
+// 瞬時のままにして #bibi-main-book へ横方向 translateX アニメを重ねる(#setupPageSlide、
+// reflowable 限定)。マンガ=pre-paginated はスプレッド切替方式の別経路なので演出しない。
 
 import { putBook } from '../storage/metadata.js'
 
@@ -121,10 +122,15 @@ export class BibiReader {
         '.bibi-app-single-row{display:block;width:100%;box-sizing:border-box;padding:14px 16px;margin-top:6px;border-top:1px solid rgba(127,127,127,.3);font-size:14px;line-height:1.4;text-align:center;cursor:pointer;color:inherit}' +
         '.bibi-app-single-row small{display:block;margin-top:3px;font-size:11px;opacity:.65}' +
         '.bibi-app-single-row:active{background:rgba(127,127,127,.18)}' +
-        // 縦書き小説(reflowable)のページ送りを滑らかにスクロール。マンガ(pre-paginated)は
-        // スプレッド切替方式なので scroll-behavior の影響を受けない。注入はメニュー生成後
-        // (=前回位置への復帰スクロール完了後)なので、復帰自体は従来どおり即時のまま。
-        '.book-reflowable #bibi-main{scroll-behavior:smooth}'
+        // 縦書き小説(reflowable)のページ送りを横スライド演出にする。Bibi はページ送りを
+        // #bibi-main のスクロール位置の一発代入で行う(この本では縦スクロール)ため、スクロール
+        // 自体は瞬時のままにして、#bibi-main-book へ横方向 translateX アニメを重ねて「横スライド」
+        // に見せる。送り(forward)は左から、戻し(back)は右から入れる。マンガ(pre-paginated)は
+        // スプレッド切替方式の別経路なので、この演出は付けない(#setupPageSlide で reflowable 限定)。
+        '@keyframes bibiAppSlideFwd{from{transform:translateX(-30%)}to{transform:translateX(0)}}' +
+        '@keyframes bibiAppSlideBack{from{transform:translateX(30%)}to{transform:translateX(0)}}' +
+        '#bibi-main-book.bibiAppFwd{animation:bibiAppSlideFwd .22s ease-out}' +
+        '#bibi-main-book.bibiAppBack{animation:bibiAppSlideBack .22s ease-out}'
       doc.head.appendChild(st)
     }
 
@@ -149,6 +155,41 @@ export class BibiReader {
     // 既存ボタンの右隣に「ライブラリ」を入れる。単独/組 切替は設定(歯車)パネル内へ。
     ul.appendChild(makeBtn('bibi-button-to-library', 'bibi-icon-to-library', 'ライブラリ', () => this.#onBack?.()))
     this.#injectSinglePageRow(doc)
+    this.#setupPageSlide(doc)
+  }
+
+  // 縦書き小説(reflowable)のページ送りを横スライドで見せる。Bibi は #bibi-main のスクロール
+  // 位置を一発代入してページを送る(この本では縦スクロール)ため、スクロール自体は瞬時のまま、
+  // 検知した送り方向に応じて #bibi-main-book へ横 translateX アニメ(.22s)を重ねる。
+  // スライダー操作中(html.slider-sliding)と、開いた直後の復帰スクロールは演出しない。
+  // ※ #bibi-main に overflow を当てると Bibi のスクロール処理が再帰してスタックする(実測)ため触らない。
+  #setupPageSlide(doc) {
+    const html = doc.documentElement
+    if (!html || !html.classList.contains('book-reflowable')) return // マンガ等は対象外
+    const main = doc.getElementById('bibi-main')
+    const book = doc.getElementById('bibi-main-book')
+    if (!main || !book || main.dataset.bibiAppSlide) return
+    main.dataset.bibiAppSlide = '1' // 二重登録防止
+
+    let lastT = main.scrollTop
+    let lastL = main.scrollLeft
+    let ready = false
+    setTimeout(() => { ready = true }, 1200) // 開いた直後の復帰スクロールは演出しない
+    const clear = () => book.classList.remove('bibiAppFwd', 'bibiAppBack')
+    book.addEventListener('animationend', clear)
+    main.addEventListener('scroll', () => {
+      const dT = main.scrollTop - lastT
+      const dL = main.scrollLeft - lastL
+      lastT = main.scrollTop
+      lastL = main.scrollLeft
+      if (!ready) return
+      if (html.classList.contains('slider-sliding')) return // スライダー操作中は演出しない
+      const delta = Math.abs(dT) >= Math.abs(dL) ? dT : dL
+      if (Math.abs(delta) < 20) return // 微小スクロールは無視
+      clear()
+      void book.offsetWidth // アニメ再起動のためリフロー
+      book.classList.add(delta > 0 ? 'bibiAppFwd' : 'bibiAppBack')
+    }, { passive: true })
   }
 
   // 「このページを単独/組 切替」を Bibi の設定(歯車)サブパネル #bibi-subpanel_config 内へ差し込む。
