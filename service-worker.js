@@ -3,7 +3,7 @@
 // オンラインで取得したアプリシェル/ライブラリ資産は都度キャッシュへ保存するため、
 // 一度オンラインで開けばオフラインでも動作する。書籍データは OPFS にあるため SW の対象外。
 
-const CACHE = 'epub-reader-v5'
+const CACHE = 'epub-reader-v6'
 
 // 保存済み EPUB を仮想URL /bibi-book/<id>.epub で配信する(Bibi に .epub URL として渡すため)。
 // Bibi は zip の Central Directory を HTTP Range で読むので、Range 要求に対応する。
@@ -50,7 +50,7 @@ async function serveStoredBook(request, id) {
   })
 }
 
-// 起動に最低限必要なシェル。残り（foliate-js の各モジュール等）は実行時に network-first でキャッシュされる。
+// 起動に最低限必要なシェル。残り（Bibi 一式や src の各モジュール等）は実行時に network-first でキャッシュされる。
 const CORE = [
   './',
   './index.html',

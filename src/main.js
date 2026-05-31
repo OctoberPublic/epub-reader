@@ -7,6 +7,7 @@ import { importBookFiles } from './library/importBook.js'
 import { getBook, migrateCovers } from './storage/metadata.js'
 import { isStorageAvailable } from './storage/books.js'
 import { isStandalone, requestPersist } from './storage/persist.js'
+import { APP_VERSION } from './version.js'
 
 const $ = (id) => document.getElementById(id)
 
@@ -116,6 +117,10 @@ async function boot() {
     toast('このブラウザは未対応です(IndexedDB が必要)')
   }
   wireGlobal()
+
+  // バージョン表示(ライブラリ下部)。デプロイ反映の目視確認用。
+  const ver = $('app-version')
+  if (ver) ver.textContent = APP_VERSION
 
   // スタンドアロン起動時は永続化を要求
   if (isStandalone()) requestPersist().catch(() => {})
