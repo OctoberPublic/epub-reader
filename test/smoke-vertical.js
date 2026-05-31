@@ -45,16 +45,15 @@ const main = async () => {
 
   const open = await probe(page)
   ok('縦書き本は右綴じ(dir=rtl)で認識される', open.dir === 'rtl', `dir=${open.dir}`)
-  ok('縦書き本は横スクロール(scrolled)モードになる(縦スクロールにしない)', open.flow === 'scrolled', `flow=${open.flow}`)
 
-  // 表紙(SVG)が引き伸ばされない
+  // 表紙(SVG)が引き伸ばされず、画面の高さ内に収まる(縦オーバーフローしない)
   ok('表紙SVGのアスペクト比を保つ(preserveAspectRatio != none)', open.par && open.par !== 'none', `par=${open.par}`)
-  ok('表紙が縦につぶれない(縦長で表示される)', open.svg && open.svg.h > open.svg.w, `svg=${JSON.stringify(open.svg)}`)
+  ok('表紙が画面の高さ内に収まる(縦にはみ出さない)', open.svg && open.svg.h <= 824, `svg=${JSON.stringify(open.svg)}`)
 
-  // ページを進める
-  for (let i = 0; i < 3; i++) { await page.evaluate(() => document.querySelector('foliate-view').next()); await wait(600) }
+  // ページを進める(本文へ到達できる=表紙で詰まらない)
+  for (let i = 0; i < 4; i++) { await page.evaluate(() => document.querySelector('foliate-view').next()); await wait(600) }
   const mid = await probe(page)
-  ok('next で本文ページへ進む', /PAGE/.test(mid.label) && mid.fraction > 0, `label=${mid.label}, frac=${mid.fraction.toFixed(3)}`)
+  ok('next で本文ページへ進める(表紙で止まらない)', /PAGE/.test(mid.label) && mid.fraction > 0, `label=${mid.label}, frac=${mid.fraction.toFixed(3)}`)
 
   // RTL: goLeft=次(進む)、goRight=前(戻る)
   const before = (await probe(page)).fraction

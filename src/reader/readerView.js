@@ -77,7 +77,7 @@ export class ReaderView {
     this.#reader.onRelocate((detail) => this.#onRelocate(detail))
     this.#reader.onLoad((detail) => {
       this.#attachTapZones(detail.doc)
-      this.#fixSvgStretch(detail.doc)
+      this.#fixCoverPage(detail.doc)
     })
 
     try {
@@ -182,8 +182,8 @@ export class ReaderView {
   }
 
   // 表紙等の SVG が preserveAspectRatio="none"(アスペクト無視で引き伸ばし)の場合に、
-  // アスペクト比を保つ "meet" に直して縦つぶれ/横伸びを防ぐ(対象は明示的に none の SVG のみで安全)。
-  #fixSvgStretch(doc) {
+  // アスペクト比を保つ "meet" へ直して縦つぶれ/横伸びを防ぐ(対象は明示的に none の SVG のみで安全)。
+  #fixCoverPage(doc) {
     try {
       for (const svg of doc.querySelectorAll?.('svg[preserveAspectRatio="none" i]') ?? []) {
         svg.setAttribute('preserveAspectRatio', 'xMidYMid meet')
