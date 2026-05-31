@@ -75,7 +75,10 @@ export class ReaderView {
     this.#reader = new FoliateReader(surface)
 
     this.#reader.onRelocate((detail) => this.#onRelocate(detail))
-    this.#reader.onLoad((detail) => this.#attachTapZones(detail.doc))
+    this.#reader.onLoad((detail) => {
+      this.#attachTapZones(detail.doc)
+      this.#fixSvgStretch(detail.doc)
+    })
 
     try {
       await this.#reader.open(file, {
@@ -176,6 +179,18 @@ export class ReaderView {
     }
     // 3) 外側クリック(余白): clientX はトップビューポート座標
     return e.clientX / width
+  }
+
+  // 表紙等の SVG が preserveAspectRatio="none"(アスペクト無視で引き伸ばし)の場合に、
+  // アスペクト比を保つ "meet" に直して縦つぶれ/横伸びを防ぐ(対象は明示的に none の SVG のみで安全)。
+  #fixSvgStretch(doc) {
+    try {
+      for (const svg of doc.querySelectorAll?.('svg[preserveAspectRatio="none" i]') ?? []) {
+        svg.setAttribute('preserveAspectRatio', 'xMidYMid meet')
+      }
+    } catch {
+      /* ignore */
+    }
   }
 
   #toggleUI(force) {

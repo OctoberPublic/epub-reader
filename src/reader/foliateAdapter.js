@@ -67,6 +67,21 @@ async function detectFixedLayout(book) {
   return false
 }
 
+// 縦書き本(vertical-rl/lr)かどうか。OPF の primary-writing-mode で判定(Kindle/Calibre 由来の本に付く)。
+// 縦書きは foliate の paginated だと縦スクロールになるため、横方向(右→左)に送れる scrolled に切り替える。
+function isVerticalWritingBook(book) {
+  const opf = book?.resources?.opf
+  if (!opf?.getElementsByTagNameNS) return false
+  try {
+    for (const m of Array.from(opf.getElementsByTagNameNS('*', 'meta'))) {
+      if (m.getAttribute('name') === 'primary-writing-mode' && /vertical/i.test(m.getAttribute('content') || '')) return true
+    }
+  } catch {
+    /* ignore */
+  }
+  return false
+}
+
 // 代表的なページ寸法 {width,height} を返す。viewport メタの無いページ(表紙等)を
 // 正しい縦横比で描くため、foliate-fxl の defaultViewport(book.rendition.viewport)に使う。
 function parseDims(w, h) {
@@ -114,6 +129,7 @@ export class FoliateReader {
   #container
   #relocateCb = null
   #loadCb = null
+  #isVertical = false // 縦書き本(横方向スクロールで送る)
 
   constructor(container) {
     this.#container = container
@@ -128,10 +144,15 @@ export class FoliateReader {
     // makeBook で本を生成し、必要なら固定レイアウト指定を補ってから open する。
     const book = await this.#prepareBook(fileOrBlob, { forceFixedLayout: opts.forceFixedLayout })
 
+    this.#isVertical = isVerticalWritingBook(book)
+
     await view.open(book)
 
     view.addEventListener('relocate', (e) => this.#relocateCb?.(e.detail))
-    view.addEventListener('load', (e) => this.#loadCb?.(e.detail))
+    view.addEventListener('load', (e) => {
+      this.#detectVerticalFromDoc(e.detail?.doc) // meta で拾えない縦書き本のフォールバック
+      this.#loadCb?.(e.detail)
+    })
 
     this.applyAttrs(opts.attrs)
     if (opts.css) this.setStyles(opts.css)
@@ -177,12 +198,27 @@ export class FoliateReader {
     return book
   }
 
+  // 縦書き本は、レンダリングされた本文の computed writing-mode から検出して横スクロールへ切替。
+  #detectVerticalFromDoc(doc) {
+    if (this.#isVertical || !doc) return
+    try {
+      const wm = doc.defaultView?.getComputedStyle(doc.body)?.writingMode || ''
+      if (/^vertical/.test(wm)) {
+        this.#isVertical = true
+        this.#view?.renderer?.setAttribute('flow', 'scrolled')
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   // ページレイアウト属性(余白・カラム・アニメーション)を適用する。
   // 固定レイアウト(foliate-fxl)はこれらの属性を持たないため何もしない。
   applyAttrs(attrs = {}) {
     const r = this.#view?.renderer
     if (!r || this.isFixedLayout) return
-    r.setAttribute('flow', 'paginated')
+    // 縦書き本は scrolled(横方向に右→左で送る)。横書き本は paginated。
+    r.setAttribute('flow', this.#isVertical ? 'scrolled' : 'paginated')
     if (attrs.animated) r.setAttribute('animated', '')
     else r.removeAttribute('animated')
     if (attrs.margin != null) r.setAttribute('margin', String(attrs.margin))
