@@ -36,44 +36,12 @@
     <div id="storage-hint" class="storage-hint" hidden></div>
   </section>
 
-  <!-- リーダー画面（foliate-view は readerView.js が挿入） -->
+  <!-- リーダー画面（Bibi を全画面 iframe で表示。bibiReader.js が挿入） -->
   <section id="reader-view" class="screen" hidden>
-    <div id="reader-surface" class="reader-surface"></div>
-
-    <header id="reader-header" class="reader-overlay reader-header">
-      <button id="reader-back" class="icon-button" aria-label="戻る" title="戻る">‹</button>
-      <span id="reader-title" class="reader-title"></span>
-    </header>
-
-    <footer id="reader-footer" class="reader-overlay reader-footer">
-      <div class="reader-toolbar">
-        <button id="toc-button" class="icon-button" aria-label="目次" title="目次">≡</button>
-        <span id="progress-label" class="progress-label"></span>
-        <button id="settings-button" class="icon-button" aria-label="表示設定" title="表示設定">Aa</button>
-      </div>
-      <input id="progress-slider" class="progress-slider" type="range" min="0" max="1" step="0.0001" value="0" />
-    </footer>
+    <div id="bibi-surface" class="bibi-surface"></div>
+    <button id="bibi-back" class="bibi-back" aria-label="ライブラリへ戻る" title="ライブラリへ戻る">‹ ライブラリ</button>
   </section>
 
-  <!-- 目次ドロワー -->
-  <aside id="toc-panel" class="drawer" hidden>
-    <div class="drawer-header">
-      <span>目次</span>
-      <button id="toc-close" class="icon-button" aria-label="閉じる">×</button>
-    </div>
-    <nav id="toc-list" class="toc-list"></nav>
-  </aside>
-
-  <!-- 表示設定ドロワー -->
-  <aside id="settings-panel" class="drawer" hidden>
-    <div class="drawer-header">
-      <span>表示設定</span>
-      <button id="settings-close" class="icon-button" aria-label="閉じる">×</button>
-    </div>
-    <div id="settings-body" class="settings-body"></div>
-  </aside>
-
-  <div id="scrim" class="scrim" hidden></div>
   <div id="toast" class="toast" hidden></div>
 
   <!-- 複数選択(iPad/PC 共通)。folder-input はフォルダ再帰選択(PC のみ。iOS は multiple にフォールバック) -->

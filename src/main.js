@@ -2,16 +2,16 @@
 // ルーティングは location.hash で行い、iOS PWA の戻る操作にも対応する。
 
 import { LibraryView } from './library/libraryView.js'
-import { ReaderView } from './reader/readerView.js'
+import { BibiReader } from './reader/bibiReader.js'
 import { importBookFiles } from './library/importBook.js'
 import { getBook, migrateCovers } from './storage/metadata.js'
-import { getBookFile, isStorageAvailable } from './storage/books.js'
+import { isStorageAvailable } from './storage/books.js'
 import { isStandalone, requestPersist } from './storage/persist.js'
 
 const $ = (id) => document.getElementById(id)
 
 const library = new LibraryView({ onOpen: (id) => openBook(id) })
-const reader = new ReaderView({ onBack: () => goLibrary() })
+const reader = new BibiReader({ onBack: () => goLibrary() })
 
 // ---- 画面切り替え ----
 function showScreen(name) {
@@ -44,9 +44,9 @@ async function enterReader(id) {
   try {
     const record = await getBook(id)
     if (!record) { location.hash = ''; return }
-    const file = await getBookFile(id)
     showScreen('reader')
-    await reader.open(record, file)
+    await reader.open(record) // 本体は Service Worker が /bibi-book/<id>.epub で配信
+
   } catch (e) {
     console.error('本を開けませんでした:', e)
     toast('本を開けませんでした')
