@@ -60,10 +60,6 @@ function pickFiles() {
   $('file-input').click()
 }
 
-function pickFolder() {
-  $('folder-input').click()
-}
-
 async function handleFiles(fileList) {
   if (!fileList || fileList.length === 0) return
   toast('取り込み中…')
@@ -93,13 +89,11 @@ function toast(msg) {
 function wireGlobal() {
   $('import-button').addEventListener('click', pickFiles)
   $('import-button-empty').addEventListener('click', pickFiles)
-  $('folder-button').addEventListener('click', pickFolder)
   const onPicked = (e) => {
     handleFiles(e.target.files)
     e.target.value = '' // 同じ選択を連続で行えるようにリセット
   }
   $('file-input').addEventListener('change', onPicked)
-  $('folder-input').addEventListener('change', onPicked)
   window.addEventListener('hashchange', route)
 }
 

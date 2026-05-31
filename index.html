@@ -24,7 +24,6 @@
     <header class="lib-header">
       <h1>ライブラリ</h1>
       <div class="lib-actions">
-        <button id="folder-button" class="icon-button" aria-label="フォルダから取り込む" title="フォルダから取り込む(PC)">🗀</button>
         <button id="import-button" class="icon-button" aria-label="本を追加(複数可)" title="本を追加(複数選択可)">＋</button>
       </div>
     </header>
@@ -45,9 +44,8 @@
 
   <div id="toast" class="toast" hidden></div>
 
-  <!-- 複数選択(iPad/PC 共通)。folder-input はフォルダ再帰選択(PC のみ。iOS は multiple にフォールバック) -->
+  <!-- 複数選択(iPad/PC 共通)。フォルダを開いて中の EPUB を全選択すれば一括取り込みできる -->
   <input id="file-input" type="file" accept=".epub,application/epub+zip" multiple hidden />
-  <input id="folder-input" type="file" accept=".epub,application/epub+zip" webkitdirectory multiple hidden />
 
   <script type="module" src="./src/main.js"></script>
 </body>

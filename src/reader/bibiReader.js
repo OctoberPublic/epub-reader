@@ -2,9 +2,11 @@
 // 保存済み EPUB は Service Worker の仮想URL /bibi-book/<id>.epub 経由で Bibi に渡す
 // (詳細は service-worker.js)。iOS のセーフエリアは親 styles.css(.bibi-surface)で対応。
 //
-// 操作ボタン(ライブラリへ戻る / 見開きの単独・組 切替)は Bibi のメニュー左群
-// (#bibi-menu-l)へ親から差し込む。Bibi メニューと同じ ul に入れるため、中央タップで
-// Bibi の UI が出るのと一緒に表示/非表示される(浮遊ボタンは廃止)。
+// 「ライブラリへ戻る」ボタンは Bibi のメニュー左群(#bibi-menu-l)の ul へ差し込む
+// (中央タップで出る Bibi メニューと一緒に表示)。「このページを単独/組 切替」は使用頻度が
+// 低いため、設定(歯車)サブパネル #bibi-subpanel_config 内の項目として差し込む。
+// また iPad のウィンドウ可変(Stage Manager/Split View)に追従するため、ResizeObserver で
+// iframe のサイズ変化を監視し、Bibi に再レイアウト用イベントを送る。
 
 import { putBook } from '../storage/metadata.js'
 
@@ -18,6 +20,9 @@ export class BibiReader {
   #onBack
   #record = null
   #pollTimer = null
+  #resizeObserver = null
+  #onWinResize = null
+  #resizeDebounce = null
 
   constructor({ onBack } = {}) {
     this.#onBack = onBack
@@ -45,6 +50,7 @@ export class BibiReader {
     f.src = src
     $('bibi-surface').appendChild(f)
     this.#iframe = f
+    this.#startResizeFollow(f)
   }
 
   // Bibi のメニュー(#bibi-menu-l ul)が生成されるまで待ってボタンを差し込む。
@@ -69,6 +75,36 @@ export class BibiReader {
     if (this.#pollTimer) { clearInterval(this.#pollTimer); this.#pollTimer = null }
   }
 
+  // iPad ではウィンドウ可変時に Bibi が再レイアウトしない(TouchOS は orientationchange のみ購読)。
+  // 親側で iframe とウィンドウのサイズ変化を監視し、iframe 内へ再レイアウト用イベントを送る。
+  #startResizeFollow(iframe) {
+    this.#stopResizeFollow()
+    const fire = () => {
+      const w = iframe.contentWindow
+      if (!w) return
+      try {
+        w.dispatchEvent(new w.Event('orientationchange')) // TouchOS の購読イベント
+        w.dispatchEvent(new w.Event('resize'))            // 非 TouchOS / 念のため
+      } catch { /* 別オリジン化等は無視 */ }
+    }
+    const debounced = () => {
+      if (this.#resizeDebounce) clearTimeout(this.#resizeDebounce)
+      this.#resizeDebounce = setTimeout(fire, 250)
+    }
+    try {
+      this.#resizeObserver = new ResizeObserver(debounced)
+      this.#resizeObserver.observe(iframe)
+    } catch { /* ResizeObserver 非対応でも window resize で補う */ }
+    this.#onWinResize = debounced
+    window.addEventListener('resize', debounced)
+  }
+
+  #stopResizeFollow() {
+    if (this.#resizeObserver) { try { this.#resizeObserver.disconnect() } catch {} this.#resizeObserver = null }
+    if (this.#onWinResize) { window.removeEventListener('resize', this.#onWinResize); this.#onWinResize = null }
+    if (this.#resizeDebounce) { clearTimeout(this.#resizeDebounce); this.#resizeDebounce = null }
+  }
+
   #injectButtons(doc, ul) {
     if (doc.getElementById('bibi-button-to-library')) return // 二重注入防止
 
@@ -77,10 +113,11 @@ export class BibiReader {
       const st = doc.createElement('style')
       st.id = 'bibi-app-button-style'
       st.textContent =
-        '.bibi-icon-to-library,.bibi-icon-toggle-single{display:-webkit-box;display:flex;-webkit-box-pack:center;justify-content:center;-webkit-box-align:center;align-items:center;width:100%;height:100%;text-decoration:none}' +
-        '.bibi-icon-to-library:before,.bibi-icon-toggle-single:before{font:22px/1 "Material Icons";-webkit-font-feature-settings:"liga";font-feature-settings:"liga";text-transform:none;-webkit-font-smoothing:antialiased}' +
-        '.bibi-icon-to-library:before{content:"arrow_back"}' +
-        '.bibi-icon-toggle-single:before{content:"import_contacts"}'
+        '.bibi-icon-to-library{display:-webkit-box;display:flex;-webkit-box-pack:center;justify-content:center;-webkit-box-align:center;align-items:center;width:100%;height:100%;text-decoration:none}' +
+        '.bibi-icon-to-library:before{font:22px/1 "Material Icons";-webkit-font-feature-settings:"liga";font-feature-settings:"liga";text-transform:none;-webkit-font-smoothing:antialiased;content:"arrow_back"}' +
+        '.bibi-app-single-row{display:block;width:100%;box-sizing:border-box;padding:14px 16px;margin-top:6px;border-top:1px solid rgba(127,127,127,.3);font-size:14px;line-height:1.4;text-align:center;cursor:pointer;color:inherit}' +
+        '.bibi-app-single-row small{display:block;margin-top:3px;font-size:11px;opacity:.65}' +
+        '.bibi-app-single-row:active{background:rgba(127,127,127,.18)}'
       doc.head.appendChild(st)
     }
 
@@ -102,9 +139,30 @@ export class BibiReader {
       return li
     }
 
-    // 既存ボタンの右隣に: ①ライブラリ ②見開きの単独/組 切替
+    // 既存ボタンの右隣に「ライブラリ」を入れる。単独/組 切替は設定(歯車)パネル内へ。
     ul.appendChild(makeBtn('bibi-button-to-library', 'bibi-icon-to-library', 'ライブラリ', () => this.#onBack?.()))
-    ul.appendChild(makeBtn('bibi-button-toggle-single', 'bibi-icon-toggle-single', '見開き: このページを単独/組 切替', () => this.#toggleSingle()))
+    this.#injectSinglePageRow(doc)
+  }
+
+  // 「このページを単独/組 切替」を Bibi の設定(歯車)サブパネル #bibi-subpanel_config 内へ差し込む。
+  // パネルはメニュー生成時に作られるが、生成タイミングのずれに備えて少しだけポーリングする。
+  #injectSinglePageRow(doc, tries = 0) {
+    if (!this.#iframe || this.#iframe.contentDocument !== doc) return // 画面が変わったら中断
+    const panels = doc.querySelectorAll('#bibi-subpanel_config')
+    if (!panels.length) {
+      if (tries < 20) setTimeout(() => this.#injectSinglePageRow(doc, tries + 1), 100)
+      return
+    }
+    panels.forEach((panel) => {
+      if (panel.querySelector('.bibi-app-single-row')) return // 二重注入防止(パネル単位)
+      const row = doc.createElement('div')
+      row.className = 'bibi-app-single-row'
+      row.setAttribute('role', 'button')
+      row.innerHTML = 'このページを単独/組 切替<small>見開きのペアがずれた時に調整</small>'
+      row.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); this.#toggleSingle() })
+      row.addEventListener('pointerdown', (e) => e.stopPropagation())
+      panel.appendChild(row)
+    })
   }
 
   // 表示中スプレッドの先頭ページ(spine index 最小)を単独/組で切り替え、保存して再読込。
@@ -150,6 +208,7 @@ export class BibiReader {
 
   destroy() {
     this.#clearPoll()
+    this.#stopResizeFollow()
     if (this.#iframe) {
       this.#iframe.remove()
       this.#iframe = null

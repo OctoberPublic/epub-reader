@@ -1,7 +1,8 @@
 // 見開きペア制御 + メニュー統合ボタンのスモーク。
 // 1) 単独集合 singlePages=[0,3] → 見開きが {0}{1,2}{3}{4,5}{6,7} = item-box 数 [1,2,1,2,2]、content ペアは若い番号が左。
-// 2) Bibi メニュー左群に「ライブラリ」「単独/組」ボタンが既存ボタンの右隣に注入され、ライブラリでライブラリ画面へ戻る。
-// 3) 「単独/組」トグルを押すと現在スプレッド先頭ページが singlePages に保存され、そのページが単独になる。
+// 2) Bibi メニュー左群に「ライブラリ」ボタンが注入され、「単独/組 切替」は設定(歯車)パネル
+//    #bibi-subpanel_config 内に注入される(メニュー列には出ない)。ライブラリで本棚へ戻る。
+// 3) 設定パネル内「単独/組 切替」を押すと現在スプレッド先頭ページが singlePages に保存される。
 import { chromium } from 'playwright'
 import { makeFxlEpub } from './make-fxl-epub.js'
 
@@ -82,22 +83,23 @@ const main = async () => {
     // メニュー注入を待つ
     await page.waitForFunction(() => {
       const f = document.querySelector('#bibi-surface iframe'); const d = f && f.contentDocument
-      return d && d.getElementById('bibi-button-to-library') && d.getElementById('bibi-button-toggle-single')
+      return d && d.getElementById('bibi-button-to-library') && d.querySelector('#bibi-subpanel_config .bibi-app-single-row')
     }, { timeout: 8000 }).catch(() => {})
     const info = await page.evaluate(() => {
       const f = document.querySelector('#bibi-surface iframe'); const d = f && f.contentDocument
       const lib = d.getElementById('bibi-button-to-library')
-      const tog = d.getElementById('bibi-button-toggle-single')
+      const togInMenu = d.getElementById('bibi-button-toggle-single') // 旧: メニュー内トグル(廃止済みのはず)
+      const togRow = d.querySelector('#bibi-subpanel_config .bibi-app-single-row') // 新: 設定パネル内
       const ul = d.querySelector('#bibi-menu-l ul')
       const lis = ul ? [...ul.children] : []
       const libLi = lib && lib.closest('li')
       // 既存ボタンの後ろ(右隣)に居るか = ul の最初の子ではない
       const libIsAfter = libLi && lis.indexOf(libLi) > 0
       const sameUl = lib && ul && ul.contains(lib)
-      return { hasLib: !!lib, hasTog: !!tog, sameUl: !!sameUl, libIsAfter: !!libIsAfter, liCount: lis.length }
+      return { hasLib: !!lib, togInMenu: !!togInMenu, hasRow: !!togRow, sameUl: !!sameUl, libIsAfter: !!libIsAfter, liCount: lis.length }
     })
-    ok('(menu) ライブラリ/単独 ボタンが両方注入される', info.hasLib && info.hasTog)
-    ok('(menu) #bibi-menu-l の ul 内・既存ボタンの右隣に入る', info.sameUl && info.libIsAfter, JSON.stringify(info))
+    ok('(menu) ライブラリはメニュー注入 / 単独切替は設定パネル内・メニューには出ない', info.hasLib && info.hasRow && !info.togInMenu, JSON.stringify(info))
+    ok('(menu) ライブラリは #bibi-menu-l の ul 内・既存ボタンの右隣', info.sameUl && info.libIsAfter, JSON.stringify(info))
     // ライブラリボタンで戻る(中央タップで UI を出してからクリック)
     await page.mouse.click(590, 410); await wait(400)
     await page.evaluate(() => { const f = document.querySelector('#bibi-surface iframe'); f.contentDocument.getElementById('bibi-button-to-library').click() })
@@ -116,11 +118,11 @@ const main = async () => {
     await page.mouse.click(1120, 410); await wait(600)
     await page.waitForFunction(() => {
       const f = document.querySelector('#bibi-surface iframe'); const d = f && f.contentDocument
-      return d && d.getElementById('bibi-button-toggle-single')
+      return d && d.querySelector('#bibi-subpanel_config .bibi-app-single-row')
     }, { timeout: 8000 }).catch(() => {})
-    // 中央タップで UI を出してからトグル
+    // 中央タップで UI を出してから設定パネル内の「単独/組 切替」行をクリック(パネルが隠れていても DOM クリックでOK)
     await page.mouse.click(590, 410); await wait(300)
-    await page.evaluate(() => { const f = document.querySelector('#bibi-surface iframe'); f.contentDocument.getElementById('bibi-button-toggle-single').click() })
+    await page.evaluate(() => { const f = document.querySelector('#bibi-surface iframe'); f.contentDocument.querySelector('#bibi-subpanel_config .bibi-app-single-row').click() })
     // 再読込を待つ
     await wait(2500)
     const sp = await getSingles(page)
