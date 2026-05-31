@@ -34,6 +34,13 @@ const snapshot = (page) => page.evaluate(() => {
 })
 const visLabels = (snap) => (snap.visible ?? []).map((x) => x.label)
 
+// 指定要素の画面内での位置(transform 適用後)を返す。
+const rectOf = (page, sel) => page.evaluate((s) => {
+  const el = document.querySelector(s)
+  const r = el.getBoundingClientRect()
+  return { left: Math.round(r.left), right: Math.round(r.right), width: Math.round(r.width), iw: window.innerWidth }
+}, sel)
+
 const importAndOpen = async (page, buffer, name) => {
   await page.goto(URL, { waitUntil: 'load' })
   await page.waitForSelector('#library-view:not([hidden])')
@@ -78,6 +85,20 @@ const main = async () => {
     await wait(700)
     const s3 = await snapshot(page)
     ok('prev で前の見開きに戻る', visLabels(s3).includes('PAGE 2') && visLabels(s3).includes('PAGE 3'), JSON.stringify(visLabels(s3)))
+
+    // ドロワー(目次/設定)が画面内に出るか(以前は ID 詳細度で transform が外れず画面外のままだった)
+    await page.evaluate(() => document.getElementById('reader-view').classList.add('ui-visible'))
+    await page.evaluate(() => document.getElementById('toc-button').click())
+    await wait(400)
+    const tocRect = await rectOf(page, '#toc-panel')
+    ok('目次ドロワーが画面内に表示される', tocRect.width > 0 && tocRect.left >= 0 && tocRect.left < tocRect.iw, JSON.stringify(tocRect))
+
+    await page.evaluate(() => document.getElementById('scrim').click())
+    await wait(300)
+    await page.evaluate(() => document.getElementById('settings-button').click())
+    await wait(400)
+    const setRect = await rectOf(page, '#settings-panel')
+    ok('設定ドロワーが画面内に表示される', setRect.width > 0 && setRect.left >= 0 && setRect.left < setRect.iw, JSON.stringify(setRect))
 
     ok('未捕捉の JS 例外が無い(calibre-svg)', pageErrors.length === 0, pageErrors.join(' | '))
     await ctx.close()
