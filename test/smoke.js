@@ -68,11 +68,11 @@ const main = async () => {
     `cfi="${info.cfi}"`)
 
   // --- ページ送り(次へ) ---
-  // 開いた直後はページャがアニメーション中(#locked)のことがあるため少し待ってから操作する。
-  await wait(500)
+  // 開いた直後はページャがアニメーション中(#locked)のことがあるため十分に待ってから操作する。
+  await wait(900)
   const cfiBefore = await page.evaluate(() => document.querySelector('foliate-view').lastLocation?.cfi ?? null)
   await page.evaluate(() => document.querySelector('foliate-view').next())
-  await wait(700)
+  await wait(900)
   const cfiAfter = await page.evaluate(() => document.querySelector('foliate-view').lastLocation?.cfi ?? null)
   ok('ページ送りで読書位置(CFI)が進む', cfiAfter && cfiAfter !== cfiBefore, `before≠after: ${cfiBefore !== cfiAfter}`)
 

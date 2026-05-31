@@ -6,7 +6,10 @@ const THEME_OPTIONS = [
   { value: 'dark', label: '夜' },
 ]
 
-export function renderSettings(bodyEl, settings, onChange) {
+// opts: { fixedLayout?: { value, onToggle }, version?: string }
+//   fixedLayout … 「この本」固有の見開き(固定レイアウト)強制トグル(グローバル設定とは別)
+//   version     … 設定パネル下部に表示するアプリのバージョン文字列
+export function renderSettings(bodyEl, settings, onChange, opts = {}) {
   // settings はミューテートせずコピーを更新して通知する。
   const state = { ...settings }
   const emit = () => onChange({ ...state })
@@ -69,6 +72,38 @@ export function renderSettings(bodyEl, settings, onChange) {
   })
   justifyRow.append(toggle)
   bodyEl.append(justifyRow)
+
+  // --- この本の表示: 見開き(固定レイアウト)強制トグル ---
+  if (opts.fixedLayout) {
+    const row = section('この本の表示')
+    const fxlToggle = document.createElement('button')
+    fxlToggle.className = 'toggle-button'
+    let on = !!opts.fixedLayout.value
+    const renderFxl = () => {
+      fxlToggle.textContent = on ? '見開き(固定レイアウト): オン' : '見開き(固定レイアウト): オフ'
+      fxlToggle.classList.toggle('active', on)
+    }
+    renderFxl()
+    fxlToggle.addEventListener('click', () => {
+      on = !on
+      renderFxl()
+      opts.fixedLayout.onToggle(on) // 本を再オープンするため、これ以降この panel は閉じられる
+    })
+    row.append(fxlToggle)
+    const hint = document.createElement('div')
+    hint.className = 'settings-hint'
+    hint.textContent = '漫画など画像主体の本が見開きにならない場合にオン'
+    row.append(hint)
+    bodyEl.append(row)
+  }
+
+  // --- バージョン表示(デプロイ確認用) ---
+  if (opts.version) {
+    const v = document.createElement('div')
+    v.className = 'settings-version'
+    v.textContent = `ver ${opts.version}`
+    bodyEl.append(v)
+  }
 
   // ---- helpers ----
   function section(title) {

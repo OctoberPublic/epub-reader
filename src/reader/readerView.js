@@ -10,7 +10,9 @@ import { buildContentCSS, getChromeColors } from './cssInject.js'
 import { loadSettings, saveSettings } from './settings.js'
 import { renderTOC } from '../ui/tocPanel.js'
 import { renderSettings } from '../ui/settingsPanel.js'
-import { updateProgress } from '../storage/metadata.js'
+import { updateProgress, getBook, putBook } from '../storage/metadata.js'
+import { getBookFile } from '../storage/books.js'
+import { APP_VERSION } from '../version.js'
 
 const SAVE_DEBOUNCE_MS = 800
 const percentFormat = new Intl.NumberFormat('ja-JP', { style: 'percent', maximumFractionDigits: 0 })
@@ -20,6 +22,7 @@ const $ = (id) => document.getElementById(id)
 export class ReaderView {
   #reader = null
   #bookId = null
+  #record = null // 現在開いている本のメタレコード
   #settings
   #tocCtl = null
   #uiVisible = false
@@ -50,6 +53,7 @@ export class ReaderView {
   // 書籍を開く。file=EPUB の File/Blob、record=メタレコード。
   async open(record, file) {
     this.#bookId = record.id
+    this.#record = record
     this.#pending = null
     this.#uiVisible = false
     this.#tocCtl = null
@@ -71,6 +75,7 @@ export class ReaderView {
         lastLocation: record.cfi ?? null,
         css: buildContentCSS(this.#settings),
         attrs: this.#currentAttrs(),
+        forceFixedLayout: record.forceFixedLayout ?? false,
       })
     } catch (e) {
       console.error('書籍を開けませんでした:', e)
@@ -149,7 +154,13 @@ export class ReaderView {
     const toc = $('toc-panel')
     const settings = $('settings-panel')
     if (which === 'settings') {
-      renderSettings($('settings-body'), this.#settings, (next) => this.#applySettings(next))
+      renderSettings($('settings-body'), this.#settings, (next) => this.#applySettings(next), {
+        fixedLayout: {
+          value: this.#record?.forceFixedLayout ?? false,
+          onToggle: (on) => this.#toggleFixedLayout(on),
+        },
+        version: APP_VERSION,
+      })
     }
     toc.hidden = which !== 'toc'
     settings.hidden = which !== 'settings'
@@ -182,6 +193,29 @@ export class ReaderView {
     const { bg } = getChromeColors(this.#settings)
     $('reader-view').style.background = bg
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', bg)
+  }
+
+  // 「この本」の見開き(固定レイアウト)強制を切り替え、永続化して本を再オープンする。
+  async #toggleFixedLayout(on) {
+    if (!this.#bookId) return
+    this.#flushSave() // 現在位置を保存してから
+    this.#closeDrawers()
+    const id = this.#bookId
+    // 最新の record(読書位置含む)を取得し、forceFixedLayout を更新・保存
+    const fresh = (await getBook(id)) ?? this.#record
+    fresh.forceFixedLayout = on
+    try {
+      await putBook(fresh)
+    } catch (e) {
+      console.warn('設定保存に失敗:', e)
+    }
+    try {
+      const file = await getBookFile(id)
+      await this.open(fresh, file)
+    } catch (e) {
+      console.error('再オープンに失敗:', e)
+      this.#toast('再読み込みに失敗しました')
+    }
   }
 
   #back() {

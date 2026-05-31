@@ -23,6 +23,23 @@ const page = (k) => `<?xml version="1.0" encoding="utf-8"?>
 <body><div class="p">PAGE ${k}</div></body>
 </html>`
 
+// 実本(Calibre/Kindle)再現用: 画像を SVG で内包する XHTML ページ。
+// noViewport=true のとき viewport メタを付けない(実本の titlepage を模す)。
+const svgPage = (k, noViewport) => `<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="ja">
+<head>
+<title>Page ${k}</title>
+${noViewport ? '' : `<meta name="viewport" content="width=${W}, height=${H}"/>\n`}<meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+</head>
+<body>
+<div class="main">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" width="100%" height="100%" viewBox="0 0 ${W} ${H}">
+<rect width="${W}" height="${H}" fill="${COLORS[(k - 1) % COLORS.length]}"/>
+<text x="${W / 2}" y="${H / 2}" font-size="140" fill="#ffffff" text-anchor="middle" dominant-baseline="middle">PAGE ${k}</text>
+</svg>
+</div>
+</body></html>`
+
 const container = `<?xml version="1.0"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
   <rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles>
@@ -30,15 +47,19 @@ const container = `<?xml version="1.0"?>
 
 // dir: 'ltr' | 'rtl'、pageCount: ページ数
 // layoutMode:
-//   'global'   … OPF 全体に rendition:layout=pre-paginated(一般的な固定レイアウト本)
-//   'per-item' … 全体メタ無し、各 itemref に properties="rendition:layout-pre-paginated"(foliate は固定判定しない)
-//   'none'     … レイアウト指定なし(純粋な reflowable)
+//   'global'      … OPF 全体に rendition:layout=pre-paginated(一般的な固定レイアウト本)
+//   'per-item'    … 全体メタ無し、各 itemref に properties="rendition:layout-pre-paginated"(foliate は固定判定しない)
+//   'none'        … レイアウト指定なし(viewport メタ付きページ)
+//   'calibre-svg' … 実本再現: rendition:layout 無し / 各ページ SVG 内包(manifest properties="svg")/
+//                   primary-writing-mode 有り / 先頭ページのみ viewport メタ無し
 export async function makeFxlEpub({ dir = 'ltr', pageCount = 8, layoutMode = 'global' } = {}) {
+  const isCalibreSvg = layoutMode === 'calibre-svg'
   const manifestItems = []
   const spineItems = []
   const itemProps = layoutMode === 'per-item' ? ' properties="rendition:layout-pre-paginated"' : ''
+  const manifestPageProps = isCalibreSvg ? ' properties="svg"' : ''
   for (let k = 1; k <= pageCount; k++) {
-    manifestItems.push(`<item id="p${k}" href="p${k}.xhtml" media-type="application/xhtml+xml"/>`)
+    manifestItems.push(`<item id="p${k}" href="p${k}.xhtml" media-type="application/xhtml+xml"${manifestPageProps}/>`)
     spineItems.push(`<itemref idref="p${k}"${itemProps}/>`)
   }
   manifestItems.push('<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>')
@@ -47,6 +68,8 @@ export async function makeFxlEpub({ dir = 'ltr', pageCount = 8, layoutMode = 'gl
   const renditionMeta = layoutMode === 'global'
     ? `\n    <meta property="rendition:layout">pre-paginated</meta>\n    <meta property="rendition:spread">auto</meta>`
     : ''
+  // 実本同様、Kindle 由来の primary-writing-mode を付与(固定レイアウトの目印)
+  const extraMeta = isCalibreSvg ? `\n    <meta name="primary-writing-mode" content="${dir === 'rtl' ? 'horizontal-rl' : 'horizontal-lr'}"/>` : ''
   const opf = `<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid" xml:lang="ja"
   prefix="rendition: http://www.idpf.org/vocab/rendition/#">
@@ -55,7 +78,7 @@ export async function makeFxlEpub({ dir = 'ltr', pageCount = 8, layoutMode = 'gl
     <dc:title>固定レイアウト テスト(${dir}/${layoutMode})</dc:title>
     <dc:creator>テスト著者</dc:creator>
     <dc:language>ja</dc:language>
-    <meta property="dcterms:modified">2024-01-01T00:00:00Z</meta>${renditionMeta}
+    <meta property="dcterms:modified">2024-01-01T00:00:00Z</meta>${renditionMeta}${extraMeta}
   </metadata>
   <manifest>
     ${manifestItems.join('\n    ')}
@@ -78,6 +101,10 @@ export async function makeFxlEpub({ dir = 'ltr', pageCount = 8, layoutMode = 'gl
   zip.file('META-INF/container.xml', container)
   zip.file('OEBPS/content.opf', opf)
   zip.file('OEBPS/nav.xhtml', nav)
-  for (let k = 1; k <= pageCount; k++) zip.file(`OEBPS/p${k}.xhtml`, page(k))
+  for (let k = 1; k <= pageCount; k++) {
+    // calibre-svg は SVG 内包ページ。先頭(k===1)だけ viewport メタ無し(実本の titlepage 相当)
+    const content = isCalibreSvg ? svgPage(k, k === 1) : page(k)
+    zip.file(`OEBPS/p${k}.xhtml`, content)
+  }
   return zip.generateAsync({ type: 'nodebuffer' })
 }

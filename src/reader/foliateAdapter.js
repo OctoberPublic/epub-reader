@@ -6,27 +6,75 @@ import { makeBook } from '../../vendor/foliate-js/view.js' // 副作用で <foli
 
 // 固定レイアウト(漫画など各ページが画像)の判定を補強する。
 // foliate は OPF 全体の rendition:layout か Apple/Kobo の display-options でしか
-// 固定レイアウトを判定しないため、spine の各 itemref に
-// properties="rendition:layout-pre-paginated" だけを持つ本は reflowable 扱いになり、
+// 固定レイアウトを判定しないため、それ以外の宣言方法(spine 個別指定、Calibre/Kindle の
+// SVG 内包＋primary-writing-mode 等)の本は reflowable 扱いになり、
 // 「画像が左上に小さく1枚」「ページ送りで進まない」という不具合になる。
-// そこで先頭セクションを覗き、固定レイアウトの目印(ピクセル指定の viewport meta、
-// もしくは SVG ルート)があれば固定レイアウトとみなす。EPUB の固定レイアウトは
-// 仕様上いずれかの viewport 情報を必ず持つため、reflowable を誤検出しにくい。
-async function looksFixedLayout(book) {
-  try {
-    const sections = book?.sections ?? []
-    const sec = sections.find((s) => s.linear !== 'no') ?? sections[0]
-    if (!sec?.createDocument) return false
-    const doc = await sec.createDocument()
-    if (doc?.documentElement?.localName === 'svg') return true
-    const vp = doc?.querySelector?.('meta[name="viewport"]')?.getAttribute('content') || ''
-    // width=数字 と height=数字 の両方がある場合のみ固定レイアウトとみなす
-    // (reflowable の width=device-width 等は数字で始まらないので除外される)
-    return /\bwidth\s*=\s*\d/i.test(vp) && /\bheight\s*=\s*\d/i.test(vp)
-  } catch (e) {
-    console.warn('固定レイアウト判定に失敗:', e)
-    return false
+// 複数の signal を OR で見て、いずれか当たれば固定レイアウトとみなす。
+
+// (1) spine itemref の properties に rendition:layout-pre-paginated
+function spineSaysFixedLayout(book) {
+  const spine = book?.resources?.spine ?? []
+  return spine.some((it) =>
+    (it.properties ?? []).some((p) => p === 'rendition:layout-pre-paginated' || p === 'layout-pre-paginated'))
+}
+
+// (2) 各ページが画像を SVG で内包する本(Calibre/Kindle)。manifest item の properties に 'svg'。
+function manifestSvgCoverage(book) {
+  const manifest = book?.resources?.manifest ?? []
+  const sections = book?.sections ?? []
+  if (!sections.length || !manifest.length) return false
+  const byHref = new Map(manifest.map((m) => [m.href, m]))
+  let svg = 0
+  for (const s of sections) {
+    const m = byHref.get(s.id) // section.id === manifest item.href
+    if ((m?.properties ?? []).includes('svg')) svg++
   }
+  return svg / sections.length >= 0.5
+}
+
+// (3) OPF メタ: primary-writing-mode(Amazon/Kindle 固定レイアウト/漫画の目印) or rendition:layout
+function opfMetaSaysFixedLayout(book) {
+  const opf = book?.resources?.opf
+  if (!opf?.getElementsByTagNameNS) return false
+  try {
+    for (const m of Array.from(opf.getElementsByTagNameNS('*', 'meta'))) {
+      if (m.getAttribute('name') === 'primary-writing-mode') return true
+      if (m.getAttribute('property') === 'rendition:layout'
+        && (m.textContent || '').trim() === 'pre-paginated') return true
+    }
+  } catch {
+    /* ignore */
+  }
+  return false
+}
+
+// (4) レンダリング系フォールバック: 先頭 linear セクションを数件見て、
+//     SVG ルート / 内部 <svg viewBox> / ピクセル指定 viewport meta のいずれかがあれば固定レイアウト。
+async function renderedLooksFixedLayout(book) {
+  const linear = (book?.sections ?? []).filter((s) => s.linear !== 'no')
+  const toCheck = (linear.length ? linear : book?.sections ?? []).slice(0, 5)
+  for (const sec of toCheck) {
+    try {
+      if (!sec?.createDocument) continue
+      const doc = await sec.createDocument()
+      if (doc?.documentElement?.localName === 'svg') return true
+      if (doc?.querySelector?.('svg[viewBox], svg[viewbox]')) return true
+      const vp = doc?.querySelector?.('meta[name="viewport"]')?.getAttribute('content') || ''
+      if (/\bwidth\s*=\s*\d/i.test(vp) && /\bheight\s*=\s*\d/i.test(vp)) return true
+    } catch {
+      /* skip this section */
+    }
+  }
+  return false
+}
+
+async function detectFixedLayout(book) {
+  if (book?.rendition?.layout === 'pre-paginated') return true
+  if (spineSaysFixedLayout(book)) return true
+  if (manifestSvgCoverage(book)) return true
+  if (opfMetaSaysFixedLayout(book)) return true
+  if (await renderedLooksFixedLayout(book)) return true
+  return false
 }
 
 export class FoliateReader {
@@ -39,14 +87,14 @@ export class FoliateReader {
     this.#container = container
   }
 
-  // fileOrBlob: EPUB の File/Blob。opts: { lastLocation, css, attrs }
+  // fileOrBlob: EPUB の File/Blob。opts: { lastLocation, css, attrs, forceFixedLayout }
   async open(fileOrBlob, opts = {}) {
     const view = document.createElement('foliate-view')
     this.#view = view
     this.#container.append(view)
 
     // makeBook で本を生成し、必要なら固定レイアウト指定を補ってから open する。
-    const book = await this.#prepareBook(fileOrBlob)
+    const book = await this.#prepareBook(fileOrBlob, { forceFixedLayout: opts.forceFixedLayout })
 
     await view.open(book)
 
@@ -62,11 +110,16 @@ export class FoliateReader {
     return this.metadata
   }
 
-  async #prepareBook(fileOrBlob) {
+  async #prepareBook(fileOrBlob, { forceFixedLayout = false } = {}) {
     const book = await makeBook(fileOrBlob)
-    if (book?.rendition?.layout !== 'pre-paginated' && (await looksFixedLayout(book))) {
+    const makeFixed = forceFixedLayout || (await detectFixedLayout(book))
+    if (makeFixed && book?.rendition?.layout !== 'pre-paginated') {
       book.rendition = book.rendition || {}
       book.rendition.layout = 'pre-paginated'
+    }
+    // 見開きを確実にするため、固定レイアウト時に spread:'none' は 'auto' に補正(横長画面で2up)
+    if (makeFixed && book?.rendition && book.rendition.spread === 'none') {
+      book.rendition.spread = 'auto'
     }
     return book
   }
