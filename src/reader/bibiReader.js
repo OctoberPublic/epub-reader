@@ -160,8 +160,14 @@ export class BibiReader {
 
   // 縦書き小説(reflowable)のページ送りを横スライドで見せる。Bibi は #bibi-main のスクロール
   // 位置を一発代入してページを送る(この本では縦スクロール)ため、スクロール自体は瞬時のまま、
-  // 検知した送り方向に応じて #bibi-main-book へ横 translateX アニメ(.22s)を重ねる。
-  // スライダー操作中(html.slider-sliding)と、開いた直後の復帰スクロールは演出しない。
+  // 送り方向に応じて #bibi-main-book へ横 translateX アニメ(.22s)を重ねる。
+  //
+  // トリガは Bibi が document に発火するページ送りイベント(OS 非依存):
+  //   bibi:going-to-move … 移動前(ここでスクロール位置を控える)
+  //   bibi:page-turned   … 移動後・1回(ここで前後差分の符号から方向を決めてアニメ)
+  // ※ 以前は #bibi-main の scroll イベントで検知していたが、iOS ではプログラム的スクロールの
+  //    scroll イベント発火が不安定でスライドが出なかった。位置は同期読みするだけにして
+  //    イベント発火依存をなくした。スライダー操作中(html.slider-sliding)と開いた直後の復帰は除外。
   // ※ #bibi-main に overflow を当てると Bibi のスクロール処理が再帰してスタックする(実測)ため触らない。
   #setupPageSlide(doc) {
     const html = doc.documentElement
@@ -171,25 +177,27 @@ export class BibiReader {
     if (!main || !book || main.dataset.bibiAppSlide) return
     main.dataset.bibiAppSlide = '1' // 二重登録防止
 
-    let lastT = main.scrollTop
-    let lastL = main.scrollLeft
+    let fromT = main.scrollTop
+    let fromL = main.scrollLeft
     let ready = false
-    setTimeout(() => { ready = true }, 1200) // 開いた直後の復帰スクロールは演出しない
+    setTimeout(() => { ready = true }, 1200) // 開いた直後の復帰移動は演出しない
     const clear = () => book.classList.remove('bibiAppFwd', 'bibiAppBack')
     book.addEventListener('animationend', clear)
-    main.addEventListener('scroll', () => {
-      const dT = main.scrollTop - lastT
-      const dL = main.scrollLeft - lastL
-      lastT = main.scrollTop
-      lastL = main.scrollLeft
+
+    // 移動前のスクロール位置を控える
+    doc.addEventListener('bibi:going-to-move', () => { fromT = main.scrollTop; fromL = main.scrollLeft })
+    // 移動後(1回)。前後差分の符号から方向を決めてスライド
+    doc.addEventListener('bibi:page-turned', () => {
       if (!ready) return
       if (html.classList.contains('slider-sliding')) return // スライダー操作中は演出しない
+      const dT = main.scrollTop - fromT
+      const dL = main.scrollLeft - fromL
       const delta = Math.abs(dT) >= Math.abs(dL) ? dT : dL
-      if (Math.abs(delta) < 20) return // 微小スクロールは無視
+      if (Math.abs(delta) < 5) return // 移動が無ければ何もしない
       clear()
       void book.offsetWidth // アニメ再起動のためリフロー
       book.classList.add(delta > 0 ? 'bibiAppFwd' : 'bibiAppBack')
-    }, { passive: true })
+    })
   }
 
   // 「このページを単独/組 切替」を Bibi の設定(歯車)サブパネル #bibi-subpanel_config 内へ差し込む。
