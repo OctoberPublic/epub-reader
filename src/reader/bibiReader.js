@@ -7,6 +7,9 @@
 // 低いため、設定(歯車)サブパネル #bibi-subpanel_config 内の項目として差し込む。
 // また iPad のウィンドウ可変(Stage Manager/Split View)に追従するため、ResizeObserver で
 // iframe のサイズ変化を監視し、Bibi に再レイアウト用イベントを送る。
+// 縦書き小説(reflowable)のページ送りは Bibi が #bibi-main のスクロール位置を一発代入する
+// ため瞬時に切り替わる。これを滑らかにするため、親から #bibi-main に scroll-behavior:smooth
+// を当てる(マンガ=pre-paginated はスクロールを使わない別方式なので無影響)。
 
 import { putBook } from '../storage/metadata.js'
 
@@ -117,7 +120,11 @@ export class BibiReader {
         '.bibi-icon-to-library:before{font:22px/1 "Material Icons";-webkit-font-feature-settings:"liga";font-feature-settings:"liga";text-transform:none;-webkit-font-smoothing:antialiased;content:"arrow_back"}' +
         '.bibi-app-single-row{display:block;width:100%;box-sizing:border-box;padding:14px 16px;margin-top:6px;border-top:1px solid rgba(127,127,127,.3);font-size:14px;line-height:1.4;text-align:center;cursor:pointer;color:inherit}' +
         '.bibi-app-single-row small{display:block;margin-top:3px;font-size:11px;opacity:.65}' +
-        '.bibi-app-single-row:active{background:rgba(127,127,127,.18)}'
+        '.bibi-app-single-row:active{background:rgba(127,127,127,.18)}' +
+        // 縦書き小説(reflowable)のページ送りを滑らかにスクロール。マンガ(pre-paginated)は
+        // スプレッド切替方式なので scroll-behavior の影響を受けない。注入はメニュー生成後
+        // (=前回位置への復帰スクロール完了後)なので、復帰自体は従来どおり即時のまま。
+        '.book-reflowable #bibi-main{scroll-behavior:smooth}'
       doc.head.appendChild(st)
     }
 
