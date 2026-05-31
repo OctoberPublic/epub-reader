@@ -99,6 +99,24 @@ const main = async () => {
     ok('見開き時、画面中央タップでヘッダ/フッタが表示される', centerTap.before === false && centerTap.after === true, JSON.stringify(centerTap))
     await page.evaluate(() => document.getElementById('reader-view').classList.remove('ui-visible'))
 
+    // 見開きの「左右端の余白(ページ外)」タップでもページ送りされること
+    const beforeMargin = visLabels(await snapshot(page)) // PAGE 2,3
+    await page.evaluate((iw) => {
+      document.getElementById('reader-surface').dispatchEvent(
+        new MouseEvent('click', { bubbles: true, clientX: Math.round(iw * 0.97), clientY: 400, screenX: Math.round(iw * 0.97), screenY: 400 }))
+    }, s1.iw)
+    await wait(700)
+    const afterRightMargin = visLabels(await snapshot(page))
+    ok('右端の余白タップで次のページへ送られる', afterRightMargin.includes('PAGE 4') && afterRightMargin.includes('PAGE 5'), `before=${JSON.stringify(beforeMargin)} after=${JSON.stringify(afterRightMargin)}`)
+    await page.evaluate((iw) => {
+      document.getElementById('reader-surface').dispatchEvent(
+        new MouseEvent('click', { bubbles: true, clientX: Math.round(iw * 0.03), clientY: 400, screenX: Math.round(iw * 0.03), screenY: 400 }))
+    }, s1.iw)
+    await wait(700)
+    const afterLeftMargin = visLabels(await snapshot(page))
+    ok('左端の余白タップで前のページへ戻る', afterLeftMargin.includes('PAGE 2') && afterLeftMargin.includes('PAGE 3'), `after=${JSON.stringify(afterLeftMargin)}`)
+    await page.evaluate(() => document.getElementById('reader-view').classList.remove('ui-visible'))
+
     await page.evaluate(() => document.querySelector('foliate-view').next())
     await wait(700)
     const s2 = await snapshot(page)

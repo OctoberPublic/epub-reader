@@ -48,6 +48,13 @@ export class ReaderView {
       const frac = parseFloat(e.target.value)
       if (!Number.isNaN(frac)) this.#reader?.goToFraction(frac)
     })
+    // ページ外の余白(見開きの左右端など)タップもページ送りに使う。
+    // iframe 内のクリックはここに伝わらない(別ブラウジングコンテキスト)ので、
+    // ここに来るのは foliate-view の余白/セーフエリア領域へのタップだけ。
+    $('reader-surface').addEventListener('click', (e) => {
+      if (!this.#reader) return
+      this.#handleTap(this.#tapRatio(e, null))
+    })
   }
 
   // 書籍を開く。file=EPUB の File/Blob、record=メタレコード。
@@ -135,16 +142,21 @@ export class ReaderView {
       const sel = doc.getSelection ? doc.getSelection() : doc.defaultView?.getSelection?.()
       if (sel && String(sel).length > 0) return
 
-      const ratio = this.#tapRatio(e, doc)
-      if (ratio < 0.3) this.#reader.goLeft()
-      else if (ratio > 0.7) this.#reader.goRight()
-      else this.#toggleUI()
+      this.#handleTap(this.#tapRatio(e, doc))
     })
+  }
+
+  // タップ位置の比(0..1)に応じて 左=goLeft / 右=goRight / 中央=UIトグル。
+  #handleTap(ratio) {
+    if (ratio == null || Number.isNaN(ratio)) return
+    if (ratio < 0.3) this.#reader?.goLeft()
+    else if (ratio > 0.7) this.#reader?.goRight()
+    else this.#toggleUI()
   }
 
   // タップ位置の「画面全体」に対する水平比(0..1)。
   // 見開き(ページごとに別 iframe)でも画面中央で判定するため、iframe 内座標ではなく画面座標で計算する。
-  // (window はトップウィンドウ=このモジュールのスコープ)
+  // doc=null のときは外側(reader-surface)のクリック。(window はトップウィンドウ=このモジュールのスコープ)
   #tapRatio(e, doc) {
     const width = window.innerWidth || 1
     // 1) 物理スクリーン座標(iframe のスケール/位置に依存しないため最も確実)
@@ -152,14 +164,17 @@ export class ReaderView {
       const x = e.screenX - (window.screenX || 0)
       if (x >= 0 && x <= width) return x / width
     }
-    // 2) iframe 要素の矩形 + スケールで画面座標へ換算
-    const fe = doc.defaultView?.frameElement
-    const r = fe?.getBoundingClientRect?.()
-    if (r && r.width > 0 && fe.offsetWidth) {
-      return (r.left + e.clientX * (r.width / fe.offsetWidth)) / width
+    // 2) iframe 内クリック: iframe 要素の矩形 + スケールで画面座標へ換算
+    if (doc) {
+      const fe = doc.defaultView?.frameElement
+      const r = fe?.getBoundingClientRect?.()
+      if (r && r.width > 0 && fe.offsetWidth) {
+        return (r.left + e.clientX * (r.width / fe.offsetWidth)) / width
+      }
+      return e.clientX / (doc.defaultView?.innerWidth || width)
     }
-    // 3) 最終フォールバック(単一 iframe 想定)
-    return e.clientX / (doc.defaultView?.innerWidth || width)
+    // 3) 外側クリック(余白): clientX はトップビューポート座標
+    return e.clientX / width
   }
 
   #toggleUI(force) {

@@ -74,6 +74,7 @@ button { cursor: pointer; font-family: inherit; }
   padding-right: calc(env(safe-area-inset-right) + 16px);
 }
 .lib-header h1 { font-size: 20px; margin: 0; font-weight: 700; }
+.lib-actions { display: flex; align-items: center; gap: 4px; }
 
 .book-grid {
   flex: 1;

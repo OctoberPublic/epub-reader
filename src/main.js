@@ -59,13 +59,24 @@ function pickFiles() {
   $('file-input').click()
 }
 
+function pickFolder() {
+  $('folder-input').click()
+}
+
 async function handleFiles(fileList) {
   if (!fileList || fileList.length === 0) return
   toast('取り込み中…')
-  const { imported, errors } = await importBookFiles(fileList)
+  const { imported, skipped, errors } = await importBookFiles(fileList, (done, total) => {
+    if (total > 1) toast(`取り込み中… ${done}/${total}`)
+  })
   if (imported.length) await library.refresh()
-  if (errors.length) toast(`${errors.length} 件の取り込みに失敗しました`)
-  else if (imported.length) toast(`${imported.length} 冊を追加しました`)
+
+  const parts = []
+  if (imported.length) parts.push(`${imported.length} 冊を追加`)
+  if (skipped.length) parts.push(`${skipped.length} 件は既に追加済み`)
+  if (errors.length) parts.push(`${errors.length} 件失敗`)
+  if (parts.length) toast(parts.join(' / '))
+  else toast('追加できる EPUB がありませんでした')
 }
 
 function toast(msg) {
@@ -81,10 +92,13 @@ function toast(msg) {
 function wireGlobal() {
   $('import-button').addEventListener('click', pickFiles)
   $('import-button-empty').addEventListener('click', pickFiles)
-  $('file-input').addEventListener('change', (e) => {
+  $('folder-button').addEventListener('click', pickFolder)
+  const onPicked = (e) => {
     handleFiles(e.target.files)
-    e.target.value = '' // 同じファイルを連続選択できるようにリセット
-  })
+    e.target.value = '' // 同じ選択を連続で行えるようにリセット
+  }
+  $('file-input').addEventListener('change', onPicked)
+  $('folder-input').addEventListener('change', onPicked)
   window.addEventListener('hashchange', route)
 }
 
