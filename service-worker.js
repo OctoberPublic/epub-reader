@@ -3,7 +3,7 @@
 // オンラインで取得したアプリシェル/ライブラリ資産は都度キャッシュへ保存するため、
 // 一度オンラインで開けばオフラインでも動作する。書籍データは OPFS にあるため SW の対象外。
 
-const CACHE = 'epub-reader-v2'
+const CACHE = 'epub-reader-v3'
 
 // 保存済み EPUB を仮想URL /bibi-book/<id>.epub で配信する(Bibi に .epub URL として渡すため)。
 // Bibi は zip の Central Directory を HTTP Range で読むので、Range 要求に対応する。
@@ -84,6 +84,17 @@ self.addEventListener('fetch', (event) => {
   const bookMatch = url.pathname.match(/\/bibi-book\/([^/]+)\.epub$/)
   if (bookMatch) {
     event.respondWith(serveStoredBook(request, decodeURIComponent(bookMatch[1])).catch(() => new Response('error', { status: 500 })))
+    return
+  }
+
+  // Bibi の Range 対応プローブ(tryRangeRequest)を無効化し、抽出方式を必ず at-once に倒す。
+  // Bibi は起動時に bibi.js 自身の URL へ Range:bytes=0-0 を投げ、206 が返ると on-the-fly
+  // (Worker から Range で逐次読み)を選ぶ。だが iOS WebKit では iframe 内 Worker の fetch を
+  // SW が制御できず/206 合成が Worker に届かず、ローディングが永久に終わらない。
+  // そこで vendor/bibi 配下への Range 付き GET は Range を外して 200(全体)で返し、プローブを
+  // 失敗させて at-once(全体を 1 回 GET → メモリ展開。Range も Worker フェッチも不要)に固定する。
+  if (request.headers.has('range') && url.pathname.includes('/vendor/bibi/')) {
+    event.respondWith(fetch(url.href).catch(() => caches.match(request)))
     return
   }
 
