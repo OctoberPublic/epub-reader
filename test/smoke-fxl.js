@@ -191,6 +191,17 @@ const main = async () => {
     await ctx.close()
   }
 
+  // ===== (3) イシュー型: 表紙だけ SVG のテキスト本(縦書き)は reflowable のまま(誤検出しない) =====
+  {
+    const epub = await makeFxlEpub({ dir: 'rtl', pageCount: 8, layoutMode: 'calibre-text' })
+    const ctx = await browser.newContext({ viewport: { width: 1180, height: 820 } })
+    const page = await ctx.newPage()
+    await importAndOpen(page, epub, 'calibre-text.epub')
+    const snap = await snapshot(page)
+    ok('表紙だけSVGのテキスト本は reflowable のまま(固定レイアウト誤検出しない)', snap.tag === 'foliate-paginator' && snap.isFixedLayout === false, `tag=${snap.tag}, fxl=${snap.isFixedLayout}`)
+    await ctx.close()
+  }
+
   await browser.close()
 
   const failed = results.filter((r) => !r.pass)

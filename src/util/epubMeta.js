@@ -2,6 +2,7 @@
 // foliate-js の makeBook を使い、DOM に描画せずにメタだけ取り出す。
 
 import { makeBook } from '../../vendor/foliate-js/view.js'
+import { blobToDataURL } from './blob.js'
 
 // foliate の metadata は文字列 / 言語マップ({en: '...'}) のどちらもあり得る。
 export function formatLanguageMap(x) {
@@ -27,21 +28,22 @@ export function formatContributor(contributor) {
 }
 
 // File/Blob からメタデータを抽出して返す。
-// 返り値: { title, author, coverBlob, dir, language }
+// 表紙は data URL 文字列(cover)で返す(Blob 再保存による iOS の破損を避けるため。詳細は util/blob.js)。
+// 返り値: { title, author, cover, dir, language }
 export async function extractMetadata(file) {
   const book = await makeBook(file)
   const meta = book.metadata ?? {}
-  let coverBlob = null
+  let cover = null
   try {
-    const cover = await book.getCover?.()
-    if (cover) coverBlob = cover
+    const blob = await book.getCover?.()
+    if (blob) cover = await blobToDataURL(blob)
   } catch {
-    coverBlob = null
+    cover = null
   }
   return {
     title: formatLanguageMap(meta.title) || (file.name ?? 'Untitled').replace(/\.epub$/i, ''),
     author: formatContributor(meta.author),
-    coverBlob,
+    cover,
     dir: book.dir === 'rtl' ? 'rtl' : 'ltr',
     language: formatLanguageMap(meta.language),
   }

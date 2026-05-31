@@ -82,7 +82,8 @@ export class ReaderView {
         lastLocation: record.cfi ?? null,
         css: buildContentCSS(this.#settings),
         attrs: this.#currentAttrs(),
-        forceFixedLayout: record.forceFixedLayout ?? false,
+        // undefined=自動判定 / true=強制FXL / false=強制リフロー(?? false にしない)
+        forceFixedLayout: record.forceFixedLayout,
       })
     } catch (e) {
       console.error('書籍を開けませんでした:', e)
@@ -189,7 +190,8 @@ export class ReaderView {
     if (which === 'settings') {
       renderSettings($('settings-body'), this.#settings, (next) => this.#applySettings(next), {
         fixedLayout: {
-          value: this.#record?.forceFixedLayout ?? false,
+          // 現在の実レイアウトを反映(自動判定/手動どちらでも)。トグルで ON/OFF を明示指定できる。
+          value: this.#reader?.isFixedLayout ?? false,
           onToggle: (on) => this.#toggleFixedLayout(on),
         },
         version: APP_VERSION,

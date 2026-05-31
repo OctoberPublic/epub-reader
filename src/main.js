@@ -4,7 +4,7 @@
 import { LibraryView } from './library/libraryView.js'
 import { ReaderView } from './reader/readerView.js'
 import { importBookFiles } from './library/importBook.js'
-import { getBook } from './storage/metadata.js'
+import { getBook, migrateCovers } from './storage/metadata.js'
 import { getBookFile, isStorageAvailable } from './storage/books.js'
 import { isStandalone, requestPersist } from './storage/persist.js'
 
@@ -125,6 +125,9 @@ async function boot() {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./service-worker.js').catch((e) => console.warn('SW 登録失敗:', e))
   }
+
+  // 旧形式(Blob)表紙を data URL へ移行(表紙破損対策)。失敗しても起動は続行。
+  await migrateCovers().catch((e) => console.warn('表紙移行に失敗:', e))
 
   await route()
 }

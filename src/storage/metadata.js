@@ -1,8 +1,9 @@
 // 書籍メタデータ + 読書位置を IndexedDB の 'books' ストアに保存する。
-// レコード: { id, title, author, coverBlob, dir, addedAt, lastOpenedAt, cfi, fraction }
-// 表紙画像(coverBlob)は小さいのでメタと一緒に格納する。
+// レコード: { id, title, author, cover(dataURL), dir, sourceName, size, addedAt, lastOpenedAt, cfi, fraction, forceFixedLayout? }
+// 表紙は data URL 文字列(cover)で保持する(Blob 再保存による iOS の破損回避。詳細は util/blob.js)。
 
 import { store, reqToPromise } from './db.js'
+import { blobToDataURL } from '../util/blob.js'
 
 // 1 冊分のメタを保存(上書き)。
 export async function putBook(record) {
@@ -25,6 +26,27 @@ export async function getAllBooks() {
 export async function deleteBook(id) {
   const s = await store('books', 'readwrite')
   return reqToPromise(s.delete(id))
+}
+
+// 旧形式(coverBlob:Blob)のレコードを cover(dataURL 文字列)へ移行する。
+// 起動時に一度実行。これにより以降の進捗保存で Blob を再保存せず、表紙破損を防ぐ。
+export async function migrateCovers() {
+  let books
+  try {
+    books = await getAllBooks()
+  } catch {
+    return
+  }
+  for (const b of books) {
+    if (b.cover || !b.coverBlob) continue
+    try {
+      b.cover = await blobToDataURL(b.coverBlob)
+      delete b.coverBlob
+      await putBook(b)
+    } catch (e) {
+      console.warn('表紙の移行に失敗:', b.id, e)
+    }
+  }
 }
 
 // 読書位置(CFI)と進捗(fraction)、最終閲覧時刻を更新する。

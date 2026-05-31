@@ -7,9 +7,9 @@ import { makeBook } from '../../vendor/foliate-js/view.js' // 副作用で <foli
 // 固定レイアウト(漫画など各ページが画像)の判定を補強する。
 // foliate は OPF 全体の rendition:layout か Apple/Kobo の display-options でしか
 // 固定レイアウトを判定しないため、それ以外の宣言方法(spine 個別指定、Calibre/Kindle の
-// SVG 内包＋primary-writing-mode 等)の本は reflowable 扱いになり、
-// 「画像が左上に小さく1枚」「ページ送りで進まない」という不具合になる。
-// 複数の signal を OR で見て、いずれか当たれば固定レイアウトとみなす。
+// SVG 内包等)の本は reflowable 扱いになり「画像が小さく1枚」「ページ送りで進まない」になる。
+// 一方で、表紙だけ SVG 包みの普通のテキスト本(縦書き含む)を固定レイアウトと誤検出しないことも重要。
+// → 「過半のページが SVG 包み」または「先頭数ページの多数が固定レイアウト的」を条件にする。
 
 // (1) spine itemref の properties に rendition:layout-pre-paginated
 function spineSaysFixedLayout(book) {
@@ -32,48 +32,38 @@ function manifestSvgCoverage(book) {
   return svg / sections.length >= 0.5
 }
 
-// (3) OPF メタ: primary-writing-mode(Amazon/Kindle 固定レイアウト/漫画の目印) or rendition:layout
-function opfMetaSaysFixedLayout(book) {
-  const opf = book?.resources?.opf
-  if (!opf?.getElementsByTagNameNS) return false
-  try {
-    for (const m of Array.from(opf.getElementsByTagNameNS('*', 'meta'))) {
-      if (m.getAttribute('name') === 'primary-writing-mode') return true
-      if (m.getAttribute('property') === 'rendition:layout'
-        && (m.textContent || '').trim() === 'pre-paginated') return true
-    }
-  } catch {
-    /* ignore */
-  }
-  return false
-}
-
-// (4) レンダリング系フォールバック: 先頭 linear セクションを数件見て、
-//     SVG ルート / 内部 <svg viewBox> / ピクセル指定 viewport meta のいずれかがあれば固定レイアウト。
-async function renderedLooksFixedLayout(book) {
+// (3) レンダリング系: 先頭数セクションのうち「固定レイアウト的」
+//     (SVG ルート / 内部 <svg viewBox> / ピクセル指定 viewport meta)なものの割合を返す。
+//     表紙だけが SVG 包みの reflowable 本(本文は普通のテキスト)を誤検出しないよう、
+//     単発ではなく「割合」で見る。
+//     ※ primary-writing-mode は縦書きリフロー本にも付くため固定レイアウト判定には使わない。
+async function fxlRenderCoverage(book) {
   const linear = (book?.sections ?? []).filter((s) => s.linear !== 'no')
-  const toCheck = (linear.length ? linear : book?.sections ?? []).slice(0, 5)
+  const toCheck = (linear.length ? linear : book?.sections ?? []).slice(0, 6)
+  let checked = 0
+  let fxlLike = 0
   for (const sec of toCheck) {
     try {
       if (!sec?.createDocument) continue
       const doc = await sec.createDocument()
-      if (doc?.documentElement?.localName === 'svg') return true
-      if (doc?.querySelector?.('svg[viewBox], svg[viewbox]')) return true
+      checked++
+      const svgRoot = doc?.documentElement?.localName === 'svg'
+      const innerSvg = !!doc?.querySelector?.('svg[viewBox], svg[viewbox]')
       const vp = doc?.querySelector?.('meta[name="viewport"]')?.getAttribute('content') || ''
-      if (/\bwidth\s*=\s*\d/i.test(vp) && /\bheight\s*=\s*\d/i.test(vp)) return true
+      const pxViewport = /\bwidth\s*=\s*\d/i.test(vp) && /\bheight\s*=\s*\d/i.test(vp)
+      if (svgRoot || innerSvg || pxViewport) fxlLike++
     } catch {
       /* skip this section */
     }
   }
-  return false
+  return checked ? fxlLike / checked : 0
 }
 
 async function detectFixedLayout(book) {
-  if (book?.rendition?.layout === 'pre-paginated') return true
-  if (spineSaysFixedLayout(book)) return true
-  if (manifestSvgCoverage(book)) return true
-  if (opfMetaSaysFixedLayout(book)) return true
-  if (await renderedLooksFixedLayout(book)) return true
+  if (book?.rendition?.layout === 'pre-paginated') return true // foliate が解釈した全体メタ/display-options
+  if (spineSaysFixedLayout(book)) return true // spine 個別の layout-pre-paginated
+  if (manifestSvgCoverage(book)) return true // 過半のページが SVG 包み(漫画等)
+  if ((await fxlRenderCoverage(book)) >= 0.6) return true // 先頭数ページの多数が固定レイアウト的
   return false
 }
 
@@ -152,10 +142,18 @@ export class FoliateReader {
     return this.metadata
   }
 
-  async #prepareBook(fileOrBlob, { forceFixedLayout = false } = {}) {
+  // forceFixedLayout: true=強制FXL / false=強制リフロー / undefined=自動判定
+  async #prepareBook(fileOrBlob, { forceFixedLayout } = {}) {
     const book = await makeBook(fileOrBlob)
     const native = book?.rendition?.layout === 'pre-paginated' // 著者が明示的に宣言したFXL
-    const makeFixed = native || forceFixedLayout || (await detectFixedLayout(book))
+
+    // ユーザーが明示的に「見開きOFF(リフロー)」にした場合は、判定や native を無視してリフロー化
+    if (forceFixedLayout === false) {
+      if (book?.rendition?.layout === 'pre-paginated') book.rendition.layout = 'reflowable'
+      return book
+    }
+
+    const makeFixed = forceFixedLayout === true || native || (await detectFixedLayout(book))
 
     // 本アプリが補完/強制してFXL化したケースのみ調整する(著者指定のFXL本は尊重して触らない)
     if (makeFixed && !native) {

@@ -7,7 +7,6 @@ const $ = (id) => document.getElementById(id)
 
 export class LibraryView {
   #onOpen
-  #coverUrls = [] // 生成した objectURL(refresh のたびに revoke)
 
   constructor({ onOpen } = {}) {
     this.#onOpen = onOpen
@@ -16,10 +15,6 @@ export class LibraryView {
   async refresh() {
     const grid = $('book-grid')
     const empty = $('library-empty')
-
-    // 既存の cover URL を解放
-    for (const url of this.#coverUrls) URL.revokeObjectURL(url)
-    this.#coverUrls = []
     grid.textContent = ''
 
     const books = await getAllBooks()
@@ -38,20 +33,34 @@ export class LibraryView {
 
     const coverWrap = document.createElement('div')
     coverWrap.className = 'book-cover'
-    if (book.coverBlob) {
-      const url = URL.createObjectURL(book.coverBlob)
-      this.#coverUrls.push(url)
-      const img = document.createElement('img')
-      img.src = url
-      img.alt = book.title ?? ''
-      img.loading = 'lazy'
-      coverWrap.append(img)
-    } else {
-      // 表紙がない場合はタイトルを大きく表示するプレースホルダ
+    const placeholder = () => {
       const ph = document.createElement('div')
       ph.className = 'cover-placeholder'
       ph.textContent = book.title ?? 'Untitled'
-      coverWrap.append(ph)
+      return ph
+    }
+    // 表紙は data URL 文字列(cover)。旧形式(coverBlob:Blob)は移行漏れ時のフォールバック。
+    let coverSrc = book.cover ?? null
+    let revokeUrl = null
+    if (!coverSrc && book.coverBlob) {
+      try {
+        coverSrc = URL.createObjectURL(book.coverBlob)
+        revokeUrl = coverSrc
+      } catch { coverSrc = null }
+    }
+    if (coverSrc) {
+      const img = document.createElement('img')
+      img.alt = book.title ?? ''
+      img.loading = 'lazy'
+      img.addEventListener('error', () => {
+        if (revokeUrl) URL.revokeObjectURL(revokeUrl)
+        img.replaceWith(placeholder()) // 読み込み失敗時はプレースホルダに差し替え
+      })
+      img.addEventListener('load', () => { if (revokeUrl) URL.revokeObjectURL(revokeUrl) })
+      img.src = coverSrc
+      coverWrap.append(img)
+    } else {
+      coverWrap.append(placeholder())
     }
 
     // 進捗バー

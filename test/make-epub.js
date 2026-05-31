@@ -23,9 +23,11 @@ const opf = `<?xml version="1.0" encoding="utf-8"?>
     <dc:creator>テスト著者</dc:creator>
     <dc:language>ja</dc:language>
     <meta property="dcterms:modified">2024-01-01T00:00:00Z</meta>
+    <meta name="cover" content="cover-img"/>
   </metadata>
   <manifest>
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+    <item id="cover-img" href="cover.svg" media-type="image/svg+xml" properties="cover-image"/>
     <item id="ch1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
     <item id="ch2" href="chapter2.xhtml" media-type="application/xhtml+xml"/>
   </manifest>
@@ -54,12 +56,18 @@ const chapter = (title, marker) => `<?xml version="1.0" encoding="utf-8"?>
 <body>${filler(marker)}</body>
 </html>`
 
+const coverSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900" viewBox="0 0 600 900">
+  <rect width="600" height="900" fill="#2f6db3"/>
+  <text x="300" y="450" font-size="64" fill="#ffffff" text-anchor="middle">COVER</text>
+</svg>`
+
 export async function makeTestEpub() {
   const zip = new JSZip()
   zip.file('mimetype', 'application/epub+zip')
   zip.file('META-INF/container.xml', container)
   zip.file('OEBPS/content.opf', opf)
   zip.file('OEBPS/nav.xhtml', nav)
+  zip.file('OEBPS/cover.svg', coverSvg)
   zip.file('OEBPS/chapter1.xhtml', chapter('第1章 はじめに', 'SMOKE_TEST_CHAPTER_ONE'))
   zip.file('OEBPS/chapter2.xhtml', chapter('第2章 つづき', 'SMOKE_TEST_CHAPTER_TWO'))
   return zip.generateAsync({ type: 'nodebuffer' })

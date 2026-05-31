@@ -94,6 +94,11 @@ const main = async () => {
   ok('読書位置が IndexedDB に保存される', saved && typeof saved.cfi === 'string' && saved.cfi.length > 0,
     `saved.cfi="${saved?.cfi}", fraction=${saved?.fraction}`)
 
+  // --- 表紙が data URL 文字列で保存され、進捗保存(レコード再保存)後も保持される(表紙破損対策) ---
+  ok('表紙が data URL 文字列で保持されている(Blob ではない)',
+    typeof saved?.cover === 'string' && saved.cover.startsWith('data:image') && !saved.coverBlob,
+    `cover head="${(saved?.cover ?? '').slice(0, 24)}", hasBlob=${!!saved?.coverBlob}`)
+
   // --- 戻る → 再度開く で位置が復帰する ---
   await page.evaluate(() => { location.hash = '' })
   await page.waitForSelector('#library-view:not([hidden])', { timeout: 10000 })
@@ -108,6 +113,21 @@ const main = async () => {
   const restored = await page.evaluate(() => document.querySelector('foliate-view').lastLocation?.cfi ?? null)
   ok('再オープン時に保存位置(CFI)から復帰する', restored && restored === saved.cfi,
     `restored="${restored}"`)
+
+  // --- 読書後にライブラリへ戻ったとき、読んだ本の表紙が表示される(? にならない) ---
+  await page.evaluate(() => { location.hash = '' })
+  await page.waitForSelector('#library-view:not([hidden])', { timeout: 10000 })
+  await page.waitForFunction(() => {
+    const img = document.querySelector('.book-card img')
+    return img && img.complete
+  }, { timeout: 10000 }).catch(() => {})
+  const cover = await page.evaluate(() => {
+    const img = document.querySelector('.book-card img')
+    if (!img) return { hasImg: false }
+    return { hasImg: true, src: (img.src || '').slice(0, 16), w: img.naturalWidth }
+  })
+  ok('読書後もライブラリの表紙が表示される(? にならない)',
+    cover.hasImg && cover.src.startsWith('data:image') && cover.w > 0, JSON.stringify(cover))
 
   // --- エラーチェック ---
   // favicon 等のノイズを除外
