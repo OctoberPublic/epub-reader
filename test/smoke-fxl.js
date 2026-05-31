@@ -24,12 +24,19 @@ const snapshot = (page) => page.evaluate(() => {
     const label = (c.doc?.body?.textContent || '').trim()
     const fe = c.doc?.defaultView?.frameElement
     const rect = fe?.getBoundingClientRect?.()
-    return { label, w: rect ? Math.round(rect.width) : 0, h: rect ? Math.round(rect.height) : 0 }
+    return {
+      label,
+      w: rect ? Math.round(rect.width) : 0,
+      h: rect ? Math.round(rect.height) : 0,
+      x: rect ? Math.round(rect.left) : 0,
+      cx: rect ? Math.round(rect.left + rect.width / 2) : 0,
+    }
   })
   return {
     tag: r?.tagName?.toLowerCase() ?? null,
     isFixedLayout: v.isFixedLayout,
     visible: items.filter((x) => x.w > 0 && x.h > 0),
+    iw: window.innerWidth,
   }
 })
 const visLabels = (snap) => (snap.visible ?? []).map((x) => x.label)
@@ -69,12 +76,28 @@ const main = async () => {
     const open = await snapshot(page)
     ok('実本型(rendition:layout 無し/SVG内包)を固定レイアウトとして描画', open.tag === 'foliate-fxl' && open.isFixedLayout === true, `tag=${open.tag}`)
 
+    // 表紙(先頭ページ)は見開きの片側ではなく、中央・全高フィットで単独表示されること
+    ok('表紙が単独表示(見開きの片側ではない)', open.visible.length === 1, `visible=${JSON.stringify(visLabels(open))}`)
+    ok('表紙が画面の高さいっぱい(>800px)', (open.visible[0]?.h ?? 0) > 800, `h=${open.visible[0]?.h}`)
+    ok('表紙が水平方向に中央に表示される', open.visible[0] != null && Math.abs(open.visible[0].cx - open.iw / 2) < 80, `cx=${open.visible[0]?.cx}, half=${Math.round(open.iw / 2)}`)
+
     await page.evaluate(() => document.querySelector('foliate-view').next())
     await wait(700)
     const s1 = await snapshot(page)
     ok('横向きで見開き2ページが表示される', s1.visible.length === 2, `visible=${JSON.stringify(visLabels(s1))}`)
     ok('各ページが画面いっぱい(高さ800px超)', s1.visible.every((z) => z.h > 800), `h=${JSON.stringify(s1.visible.map((z) => z.h))}`)
     ok('左→右(next)で次のページが表示される', visLabels(s1).includes('PAGE 2') && visLabels(s1).includes('PAGE 3'), JSON.stringify(visLabels(s1)))
+
+    // 見開き時に「画面中央」タップで UI(ヘッダ/フッタ)が出ること(以前は各ページ中央でしか出なかった)
+    await page.evaluate(() => document.getElementById('reader-view').classList.remove('ui-visible'))
+    const centerTap = await page.evaluate((iw) => {
+      const doc = document.querySelector('foliate-view').renderer.getContents()[0].doc
+      const before = document.getElementById('reader-view').classList.contains('ui-visible')
+      doc.body.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 10, clientY: 10, screenX: Math.round(iw * 0.5), screenY: 10 }))
+      return { before, after: document.getElementById('reader-view').classList.contains('ui-visible') }
+    }, s1.iw)
+    ok('見開き時、画面中央タップでヘッダ/フッタが表示される', centerTap.before === false && centerTap.after === true, JSON.stringify(centerTap))
+    await page.evaluate(() => document.getElementById('reader-view').classList.remove('ui-visible'))
 
     await page.evaluate(() => document.querySelector('foliate-view').next())
     await wait(700)
@@ -99,6 +122,19 @@ const main = async () => {
     await wait(400)
     const setRect = await rectOf(page, '#settings-panel')
     ok('設定ドロワーが画面内に表示される', setRect.width > 0 && setRect.left >= 0 && setRect.left < setRect.iw, JSON.stringify(setRect))
+
+    // 画面端タップは UI を出さず、ページ送りに使われること
+    await page.evaluate(() => {
+      document.getElementById('scrim').click() // ドロワーを閉じる
+      document.getElementById('reader-view').classList.remove('ui-visible')
+    })
+    await wait(200)
+    const edgeTap = await page.evaluate((iw) => {
+      const doc = document.querySelector('foliate-view').renderer.getContents()[0].doc
+      doc.body.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 5, clientY: 5, screenX: Math.round(iw * 0.12), screenY: 5 }))
+      return document.getElementById('reader-view').classList.contains('ui-visible')
+    }, setRect.iw)
+    ok('見開き時、画面端タップではUIは出ない(ページ送り側)', edgeTap === false, `ui-visible=${edgeTap}`)
 
     ok('未捕捉の JS 例外が無い(calibre-svg)', pageErrors.length === 0, pageErrors.join(' | '))
     await ctx.close()

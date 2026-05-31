@@ -77,6 +77,48 @@ async function detectFixedLayout(book) {
   return false
 }
 
+// 代表的なページ寸法 {width,height} を返す。viewport メタの無いページ(表紙等)を
+// 正しい縦横比で描くため、foliate-fxl の defaultViewport(book.rendition.viewport)に使う。
+function parseDims(w, h) {
+  const width = parseFloat(w)
+  const height = parseFloat(h)
+  if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) return { width, height }
+  return null
+}
+function parseViewBox(vb) {
+  if (!vb) return null
+  const p = vb.trim().split(/[\s,]+/)
+  return p.length === 4 ? parseDims(p[2], p[3]) : null
+}
+function parseViewportMeta(content) {
+  if (!content) return null
+  const w = /\bwidth\s*=\s*(\d+(?:\.\d+)?)/i.exec(content)?.[1]
+  const h = /\bheight\s*=\s*(\d+(?:\.\d+)?)/i.exec(content)?.[1]
+  return w && h ? parseDims(w, h) : null
+}
+async function firstViewport(book) {
+  const linear = (book?.sections ?? []).filter((s) => s.linear !== 'no')
+  const toCheck = (linear.length ? linear : book?.sections ?? []).slice(0, 5)
+  for (const sec of toCheck) {
+    try {
+      if (!sec?.createDocument) continue
+      const doc = await sec.createDocument()
+      const meta = parseViewportMeta(doc?.querySelector?.('meta[name="viewport"]')?.getAttribute('content') || '')
+      if (meta) return meta
+      if (doc?.documentElement?.localName === 'svg') {
+        const vb = parseViewBox(doc.documentElement.getAttribute('viewBox') || doc.documentElement.getAttribute('viewbox'))
+        if (vb) return vb
+      }
+      const svg = doc?.querySelector?.('svg[viewBox], svg[viewbox]')
+      const vb2 = parseViewBox(svg?.getAttribute?.('viewBox') || svg?.getAttribute?.('viewbox'))
+      if (vb2) return vb2
+    } catch {
+      /* skip */
+    }
+  }
+  return null
+}
+
 export class FoliateReader {
   #view = null
   #container
@@ -112,14 +154,27 @@ export class FoliateReader {
 
   async #prepareBook(fileOrBlob, { forceFixedLayout = false } = {}) {
     const book = await makeBook(fileOrBlob)
-    const makeFixed = forceFixedLayout || (await detectFixedLayout(book))
-    if (makeFixed && book?.rendition?.layout !== 'pre-paginated') {
+    const native = book?.rendition?.layout === 'pre-paginated' // 著者が明示的に宣言したFXL
+    const makeFixed = native || forceFixedLayout || (await detectFixedLayout(book))
+
+    // 本アプリが補完/強制してFXL化したケースのみ調整する(著者指定のFXL本は尊重して触らない)
+    if (makeFixed && !native) {
       book.rendition = book.rendition || {}
       book.rendition.layout = 'pre-paginated'
-    }
-    // 見開きを確実にするため、固定レイアウト時に spread:'none' は 'auto' に補正(横長画面で2up)
-    if (makeFixed && book?.rendition && book.rendition.spread === 'none') {
-      book.rendition.spread = 'auto'
+      // 見開きを確実にするため spread:'none' は 'auto' に(横長画面で2up)
+      if (book.rendition.spread === 'none') book.rendition.spread = 'auto'
+      // viewport メタの無いページ(表紙等)を正しい縦横比で描くため、代表寸法を default に設定
+      if (!book.rendition.viewport) {
+        const vp = await firstViewport(book)
+        if (vp) book.rendition.viewport = vp
+      }
+      // page-spread 指定が全く無い本は、表紙(先頭)を中央・全高フィット表示にする
+      const sections = book.sections ?? []
+      const hasAnyPageSpread = sections.some((s) => s.pageSpread)
+      if (!hasAnyPageSpread) {
+        const first = sections.find((s) => s.linear !== 'no') ?? sections[0]
+        if (first) first.pageSpread = 'center'
+      }
     }
     return book
   }

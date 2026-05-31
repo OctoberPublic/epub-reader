@@ -135,13 +135,31 @@ export class ReaderView {
       const sel = doc.getSelection ? doc.getSelection() : doc.defaultView?.getSelection?.()
       if (sel && String(sel).length > 0) return
 
-      const win = doc.defaultView || window
-      const width = win.innerWidth || doc.documentElement.clientWidth || 1
-      const ratio = e.clientX / width
+      const ratio = this.#tapRatio(e, doc)
       if (ratio < 0.3) this.#reader.goLeft()
       else if (ratio > 0.7) this.#reader.goRight()
       else this.#toggleUI()
     })
+  }
+
+  // タップ位置の「画面全体」に対する水平比(0..1)。
+  // 見開き(ページごとに別 iframe)でも画面中央で判定するため、iframe 内座標ではなく画面座標で計算する。
+  // (window はトップウィンドウ=このモジュールのスコープ)
+  #tapRatio(e, doc) {
+    const width = window.innerWidth || 1
+    // 1) 物理スクリーン座標(iframe のスケール/位置に依存しないため最も確実)
+    if (typeof e.screenX === 'number' && Number.isFinite(e.screenX)) {
+      const x = e.screenX - (window.screenX || 0)
+      if (x >= 0 && x <= width) return x / width
+    }
+    // 2) iframe 要素の矩形 + スケールで画面座標へ換算
+    const fe = doc.defaultView?.frameElement
+    const r = fe?.getBoundingClientRect?.()
+    if (r && r.width > 0 && fe.offsetWidth) {
+      return (r.left + e.clientX * (r.width / fe.offsetWidth)) / width
+    }
+    // 3) 最終フォールバック(単一 iframe 想定)
+    return e.clientX / (doc.defaultView?.innerWidth || width)
   }
 
   #toggleUI(force) {
