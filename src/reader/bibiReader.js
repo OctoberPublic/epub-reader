@@ -1,6 +1,8 @@
 // Bibi(縦書き対応の Web EPUB リーダー)を全画面 iframe で開くリーダー。
 // 保存済み EPUB は Service Worker の仮想URL /bibi-book/<id>.epub 経由で Bibi に渡す
 // (Bibi に拡張子付きの実URL+Range を見せるため。詳細は service-worker.js)。
+// iOS のセーフエリア対応は親側 styles.css(.bibi-surface を env(safe-area-inset-*) で配置)で行う
+// — iframe 内は env() を継承しないため、Bibi 全体をセーフエリア内に収める方式。
 
 const $ = (id) => document.getElementById(id)
 

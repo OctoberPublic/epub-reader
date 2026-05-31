@@ -160,7 +160,15 @@ button { cursor: pointer; font-family: inherit; }
 
 /* ============ リーダー(Bibi iframe) ============ */
 #reader-view { position: absolute; inset: 0; background: #fff; }
-.bibi-surface { position: absolute; inset: 0; }
+/* Bibi iframe はセーフエリア内に収める(iframe 内は env() を継承しないため親で対応)。
+   これで Bibi のメニューバーや本文が iOS のステータスバー/ホームインジケータと重ならない。 */
+.bibi-surface {
+  position: absolute;
+  top: env(safe-area-inset-top, 0px);
+  right: env(safe-area-inset-right, 0px);
+  bottom: env(safe-area-inset-bottom, 0px);
+  left: env(safe-area-inset-left, 0px);
+}
 .bibi-frame { width: 100%; height: 100%; border: 0; display: block; }
 .bibi-back {
   position: absolute;

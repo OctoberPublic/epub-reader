@@ -33,7 +33,7 @@ ${noViewport ? '' : `<meta name="viewport" content="width=${W}, height=${H}"/>\n
 </head>
 <body>
 <div class="main">
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" width="100%" height="100%" viewBox="0 0 ${W} ${H}">
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" version="1.1" width="100%" height="100%" viewBox="0 0 ${W} ${H}"${noViewport ? ' preserveAspectRatio="none"' : ''}>
 <rect width="${W}" height="${H}" fill="${COLORS[(k - 1) % COLORS.length]}"/>
 <text x="${W / 2}" y="${H / 2}" font-size="140" fill="#ffffff" text-anchor="middle" dominant-baseline="middle">PAGE ${k}</text>
 </svg>

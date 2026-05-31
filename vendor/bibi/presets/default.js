@@ -56,7 +56,7 @@ Bibi.preset({
 "use-bookmarks"              : "yes", // "yes" or "no" or "desktop" or "mobile"
 "max-bookmarks"              : 3, // Number (0-9). If larger than 9, treated as 9. If 0, "use-bookmarks" is treated as "no" (but old data is kept in localStorage). 
 
-"orientation-border-ratio"   : 1 * 2 / 1.5, // Number (Width per Height)
+"orientation-border-ratio"   : 1.1, // [本アプリで変更] 横長(iPad横向き4:3≈1.333)で確実に landscape=見開きにし、縦向きは単ページを維持(元: 1*2/1.5≈1.333 は 4:3 と同値で境界が不安定だった)
 
 "ui-font-family"             : "", // CSS font-family value as "'Helvetica', sans-serif" or ""
 
