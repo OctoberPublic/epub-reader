@@ -9,7 +9,8 @@ import { deleteBookFile } from '../storage/books.js'
 const $ = (id) => document.getElementById(id)
 
 // 並べ替えの比較関数。
-const byRecent = (a, b) => (b.lastOpenedAt ?? b.addedAt ?? 0) - (a.lastOpenedAt ?? a.addedAt ?? 0)
+// || を使うのは lastOpenedAt===0(未開封)のとき addedAt にフォールバックさせるため(?? だと 0 のまま)。
+const byRecent = (a, b) => (b.lastOpenedAt || b.addedAt || 0) - (a.lastOpenedAt || a.addedAt || 0)
 const byAdded = (a, b) => (b.addedAt ?? 0) - (a.addedAt ?? 0) // 追加順(新しい順)
 const byName = (a, b) => (a.title ?? '').localeCompare(b.title ?? '', 'ja')
 const SORTERS = { recent: byRecent, name: byName, added: byAdded }

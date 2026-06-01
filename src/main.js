@@ -4,7 +4,7 @@
 import { LibraryView } from './library/libraryView.js'
 import { BibiReader } from './reader/bibiReader.js'
 import { importBookFiles } from './library/importBook.js'
-import { getBook, migrateCovers } from './storage/metadata.js'
+import { getBook, migrateCovers, markOpened } from './storage/metadata.js'
 import { isStorageAvailable, hasBookFile } from './storage/books.js'
 import { isStandalone, requestPersist } from './storage/persist.js'
 import { APP_VERSION } from './version.js'
@@ -53,6 +53,8 @@ async function enterReader(id) {
       return
     }
     showScreen('reader')
+    // 「最近開いた順」用に最終閲覧時刻を更新(コミット完了を待つ。失敗しても本は開く)。
+    await markOpened(id).catch(() => {})
     await reader.open(record) // 本体は Service Worker が /bibi-book/<id>.epub で配信
 
   } catch (e) {

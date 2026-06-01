@@ -18,8 +18,9 @@ export async function getBook(id) {
 export async function getAllBooks() {
   const s = await store('books', 'readonly')
   const all = await reqToPromise(s.getAll())
-  // 最近開いた順(未読は追加順)で返す
-  return all.sort((a, b) => (b.lastOpenedAt ?? b.addedAt ?? 0) - (a.lastOpenedAt ?? a.addedAt ?? 0))
+  // 最近開いた順(未読は addedAt の追加順)で返す。
+  // || を使うのは lastOpenedAt===0(未開封)のとき addedAt にフォールバックさせるため(?? だと 0 のまま)。
+  return all.sort((a, b) => (b.lastOpenedAt || b.addedAt || 0) - (a.lastOpenedAt || a.addedAt || 0))
 }
 
 export async function deleteBook(id) {
@@ -66,6 +67,17 @@ export async function setFavorite(id, favorite) {
     const record = await reqToPromise(s.get(id))
     if (!record) return
     record.favorite = !!favorite
+    return reqToPromise(s.put(record))
+  })
+}
+
+// 最終閲覧時刻だけを更新する(本を開いた時点で呼ぶ)。「最近開いた順」ソートの基準。
+// cfi/fraction(読書位置・進捗)はここでは触らない。
+export async function markOpened(id) {
+  return mutate('books', async (s) => {
+    const record = await reqToPromise(s.get(id))
+    if (!record) return
+    record.lastOpenedAt = Date.now()
     return reqToPromise(s.put(record))
   })
 }
