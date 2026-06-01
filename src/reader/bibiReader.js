@@ -19,17 +19,27 @@ const $ = (id) => document.getElementById(id)
 // 既定の単独ページ(表紙のみ単独)。固定レイアウト本でユーザーが「単独/組」を切り替えると更新される。
 const defaultSingles = (record) => (Array.isArray(record.singlePages) ? record.singlePages : [0])
 
+// ロード監視のタイミング(白画面で固まらないための保険)。
+const AUTO_SHOW_MS = 4000  // この秒数までにロードが終わらなければ脱出ボタンを自動表示
+const LOAD_FAIL_MS = 12000 // この秒数までに本文が出なければ「開けませんでした」とみなす(ポーリングの約10秒より少し長く)
+
 export class BibiReader {
   #iframe = null
   #onBack
+  #onError
   #record = null
   #pollTimer = null
   #resizeObserver = null
   #onWinResize = null
   #resizeDebounce = null
+  #loadTimer = null
+  #autoShowTimer = null
+  #loaded = false
+  #failed = false
 
-  constructor({ onBack } = {}) {
+  constructor({ onBack, onError } = {}) {
     this.#onBack = onBack
+    this.#onError = onError
   }
 
   // record: メタレコード({ id, title, singlePages?, ... })。本体は SW が IndexedDB から配信する。
@@ -40,39 +50,99 @@ export class BibiReader {
     } catch {
       /* SW 未対応でも続行 */
     }
+    // controller が無いと /bibi-book/<id>.epub が SW を通らず 404 → 白画面になる。
+    // 一度だけ controllerchange を待ってから iframe を作る(3秒で諦める安全弁つき。リロードはしない)。
+    try {
+      if (navigator.serviceWorker && !navigator.serviceWorker.controller) {
+        await new Promise((resolve) => {
+          let done = false
+          const finish = () => { if (!done) { done = true; resolve() } }
+          navigator.serviceWorker.addEventListener('controllerchange', finish, { once: true })
+          setTimeout(finish, 3000)
+        })
+      }
+    } catch { /* 無視して続行 */ }
+
     const singles = defaultSingles(record).join(',')
     const bookUrl = new URL('bibi-book/' + encodeURIComponent(record.id) + '.epub', document.baseURI).href
     const src = new URL('vendor/bibi/index.html', document.baseURI).href +
       '?book=' + encodeURIComponent(bookUrl) + '&bbsingles=' + encodeURIComponent(singles)
 
     this.destroy()
+    this.#loaded = false
+    this.#failed = false
     const f = document.createElement('iframe')
     f.className = 'bibi-frame'
     f.setAttribute('allow', 'fullscreen')
     f.setAttribute('title', record.title ?? 'EPUB')
     f.addEventListener('load', () => this.#waitAndInjectButtons(f))
+    f.addEventListener('error', () => this.#onLoadFailed())
     f.src = src
     $('bibi-surface').appendChild(f)
     this.#iframe = f
     this.#startResizeFollow(f)
+
+    // 白画面で固まらないための保険: 一定時間で脱出ボタンを自動表示し、さらに長く待っても
+    // 本文が出なければ失敗とみなしてエラー表示する(本文検知で下の #markLoaded が解除する)。
+    const esc = $('reader-escape')
+    if (esc) esc.hidden = true
+    this.#autoShowTimer = setTimeout(() => {
+      if (!this.#loaded && esc) esc.hidden = false
+    }, AUTO_SHOW_MS)
+    this.#loadTimer = setTimeout(() => this.#onLoadFailed(), LOAD_FAIL_MS)
   }
 
   // Bibi のメニュー(#bibi-menu-l ul)が生成されるまで待ってボタンを差し込む。
+  // あわせて本文の描画(=ロード成功)を検知し、失敗監視タイマーを解除する。
   #waitAndInjectButtons(iframe) {
     this.#clearPoll()
     let tries = 0
+    let injected = false
     this.#pollTimer = setInterval(() => {
       tries++
       let doc
       try { doc = iframe.contentDocument } catch { this.#clearPoll(); return }
-      const ul = doc && doc.querySelector('#bibi-menu-l ul')
-      if (ul) {
-        this.#clearPoll()
-        this.#injectButtons(doc, ul)
-      } else if (tries > 100) {
-        this.#clearPoll() // 約10秒で諦める(メニュー無し設定など)
+      if (!doc) { if (tries > 100) this.#clearPoll(); return }
+      // 本文が実際に描画されたらロード成功とみなす(失敗監視を解除・脱出ボタンを隠す)。
+      if (this.#looksLoaded(doc)) this.#markLoaded()
+      // メニューが生成されたら一度だけボタンを差し込む(成功判定とは独立)。
+      if (!injected) {
+        const ul = doc.querySelector('#bibi-menu-l ul')
+        if (ul) { injected = true; this.#injectButtons(doc, ul) }
       }
+      if ((this.#loaded && injected) || tries > 100) this.#clearPoll() // 成功し切ったか約10秒で停止
     }, 100)
+  }
+
+  // 「本文が実際に描画されたか」で成功を判定する。documentElement のクラス(view-paged 等)は
+  // エンジン初期化時に早めに付き、本体取得が失敗(404/壊れた zip)しても付くことがあるため当てにせず、
+  // spine アイテムの iframe(=本文)が #bibi-main-book 内に出たかで判定する。
+  #looksLoaded(doc) {
+    const book = doc.getElementById('bibi-main-book')
+    return !!(book && book.querySelector('iframe'))
+  }
+
+  // ロード成功: 監視タイマーを解除し、脱出ボタンを隠す。
+  #markLoaded() {
+    if (this.#loaded) return
+    this.#loaded = true
+    if (this.#loadTimer) { clearTimeout(this.#loadTimer); this.#loadTimer = null }
+    if (this.#autoShowTimer) { clearTimeout(this.#autoShowTimer); this.#autoShowTimer = null }
+    const esc = $('reader-escape')
+    if (esc) esc.hidden = true
+  }
+
+  // ロード失敗(iframe error / タイムアウト): エラー表示して脱出ボタンを露出する。
+  // 自動でライブラリへは戻さず、再試行か戻るをユーザーに委ねる。
+  #onLoadFailed() {
+    if (this.#failed || this.#loaded) return
+    this.#failed = true
+    if (this.#loadTimer) { clearTimeout(this.#loadTimer); this.#loadTimer = null }
+    if (this.#autoShowTimer) { clearTimeout(this.#autoShowTimer); this.#autoShowTimer = null }
+    this.#clearPoll()
+    const esc = $('reader-escape')
+    if (esc) esc.hidden = false
+    this.#onError?.('本を開けませんでした')
   }
 
   #clearPoll() {
@@ -265,6 +335,10 @@ export class BibiReader {
   destroy() {
     this.#clearPoll()
     this.#stopResizeFollow()
+    if (this.#loadTimer) { clearTimeout(this.#loadTimer); this.#loadTimer = null }
+    if (this.#autoShowTimer) { clearTimeout(this.#autoShowTimer); this.#autoShowTimer = null }
+    const esc = $('reader-escape')
+    if (esc) esc.hidden = true
     if (this.#iframe) {
       this.#iframe.remove()
       this.#iframe = null

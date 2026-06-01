@@ -39,6 +39,29 @@ export async function store(name, mode) {
   return db.transaction(name, mode).objectStore(name)
 }
 
+// トランザクションのコミット完了(oncomplete)を待つ。
+// iOS WebKit(特に PWA)では、書き込みを request.onsuccess で完了扱いにすると、
+// コミット前にバックグラウンド化/画面遷移(例: 本を開く)が起きた時に書き込みが
+// 失われることがある。書き込みは必ずこの oncomplete まで待ってから resolve する。
+export function txComplete(tx) {
+  return new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+    tx.onabort = () => reject(tx.error || new DOMException('transaction aborted', 'AbortError'))
+  })
+}
+
+// 書き込みの定型。fn(store) 内で put/delete(必要なら reqToPromise を併用)し、
+// トランザクションがコミットされてから fn の戻り値を返す。
+// 読み取りは従来どおり store()+reqToPromise を使う(コミット待ちは不要)。
+export async function mutate(name, fn) {
+  const db = await openDB()
+  const tx = db.transaction(name, 'readwrite')
+  const result = await fn(tx.objectStore(name))
+  await txComplete(tx)
+  return result
+}
+
 export function isStorageAvailable() {
   return typeof indexedDB !== 'undefined'
 }

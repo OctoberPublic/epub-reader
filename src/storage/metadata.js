@@ -2,13 +2,12 @@
 // レコード: { id, title, author, cover(dataURL), dir, sourceName, size, addedAt, lastOpenedAt, cfi, fraction, forceFixedLayout? }
 // 表紙は data URL 文字列(cover)で保持する(Blob 再保存による iOS の破損回避。詳細は util/blob.js)。
 
-import { store, reqToPromise } from './db.js'
+import { store, reqToPromise, mutate } from './db.js'
 import { blobToDataURL } from '../util/blob.js'
 
-// 1 冊分のメタを保存(上書き)。
+// 1 冊分のメタを保存(上書き)。コミット完了まで待つ(durability、詳細は db.js)。
 export async function putBook(record) {
-  const s = await store('books', 'readwrite')
-  return reqToPromise(s.put(record))
+  return mutate('books', (s) => reqToPromise(s.put(record)))
 }
 
 export async function getBook(id) {
@@ -24,8 +23,7 @@ export async function getAllBooks() {
 }
 
 export async function deleteBook(id) {
-  const s = await store('books', 'readwrite')
-  return reqToPromise(s.delete(id))
+  return mutate('books', (s) => reqToPromise(s.delete(id)))
 }
 
 // 旧形式(coverBlob:Blob)のレコードを cover(dataURL 文字列)へ移行する。
@@ -51,11 +49,12 @@ export async function migrateCovers() {
 
 // 読書位置(CFI)と進捗(fraction)、最終閲覧時刻を更新する。
 export async function updateProgress(id, { cfi, fraction }) {
-  const s = await store('books', 'readwrite')
-  const record = await reqToPromise(s.get(id))
-  if (!record) return
-  if (cfi != null) record.cfi = cfi
-  if (fraction != null) record.fraction = fraction
-  record.lastOpenedAt = Date.now()
-  return reqToPromise(s.put(record))
+  return mutate('books', async (s) => {
+    const record = await reqToPromise(s.get(id))
+    if (!record) return
+    if (cfi != null) record.cfi = cfi
+    if (fraction != null) record.fraction = fraction
+    record.lastOpenedAt = Date.now()
+    return reqToPromise(s.put(record))
+  })
 }

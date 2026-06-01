@@ -37,9 +37,12 @@
   </section>
 
   <!-- リーダー画面（Bibi を全画面 iframe で表示。bibiReader.js が挿入）。
-       ライブラリへ戻る/見開き切替ボタンは Bibi のメニュー内に bibiReader.js が差し込む。 -->
+       ライブラリへ戻る/見開き切替ボタンは Bibi のメニュー内に bibiReader.js が差し込む。
+       #reader-escape は iframe の外に置く非常用の戻るボタン。Bibi が読み込めず白画面で
+       固まった時でも必ず押せるよう、ロードが遅い時だけ自動表示する（bibiReader.js が制御）。 -->
   <section id="reader-view" class="screen" hidden>
     <div id="bibi-surface" class="bibi-surface"></div>
+    <button id="reader-escape" class="reader-escape" type="button" aria-label="ライブラリへ戻る" hidden>×</button>
   </section>
 
   <div id="toast" class="toast" hidden></div>

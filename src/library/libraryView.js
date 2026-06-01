@@ -7,9 +7,11 @@ const $ = (id) => document.getElementById(id)
 
 export class LibraryView {
   #onOpen
+  #onError
 
-  constructor({ onOpen } = {}) {
+  constructor({ onOpen, onError } = {}) {
     this.#onOpen = onOpen
+    this.#onError = onError
   }
 
   async refresh() {
@@ -102,12 +104,14 @@ export class LibraryView {
 
   async #confirmDelete(book) {
     if (!confirm(`「${book.title ?? 'この本'}」を削除しますか?`)) return
-    try {
-      await deleteBook(book.id)
-      await deleteBookFile(book.id)
-    } catch (e) {
-      console.error('削除に失敗:', e)
+    // メタ(books)と本体(files)の両方を試みる。片方が失敗しても他方は削除し、
+    // 失敗があればユーザーに知らせる(片方だけ残るとゴミ/重複判定の原因になるため)。
+    const results = await Promise.allSettled([deleteBook(book.id), deleteBookFile(book.id)])
+    const failed = results.filter((r) => r.status === 'rejected')
+    if (failed.length) {
+      failed.forEach((r) => console.error('削除に失敗:', r.reason))
+      this.#onError?.('削除に失敗しました')
     }
-    this.refresh()
+    await this.refresh()
   }
 }

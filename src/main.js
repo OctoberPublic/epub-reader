@@ -5,14 +5,14 @@ import { LibraryView } from './library/libraryView.js'
 import { BibiReader } from './reader/bibiReader.js'
 import { importBookFiles } from './library/importBook.js'
 import { getBook, migrateCovers } from './storage/metadata.js'
-import { isStorageAvailable } from './storage/books.js'
+import { isStorageAvailable, hasBookFile } from './storage/books.js'
 import { isStandalone, requestPersist } from './storage/persist.js'
 import { APP_VERSION } from './version.js'
 
 const $ = (id) => document.getElementById(id)
 
-const library = new LibraryView({ onOpen: (id) => openBook(id) })
-const reader = new BibiReader({ onBack: () => goLibrary() })
+const library = new LibraryView({ onOpen: (id) => openBook(id), onError: (msg) => toast(msg) })
+const reader = new BibiReader({ onBack: () => goLibrary(), onError: (msg) => toast(msg) })
 
 // ---- 画面切り替え ----
 function showScreen(name) {
@@ -45,6 +45,13 @@ async function enterReader(id) {
   try {
     const record = await getBook(id)
     if (!record) { location.hash = ''; return }
+    // 本体 Blob が欠落していると Bibi が白画面で固まる。開く前に確認し、無ければ
+    // 白画面にせず明確に知らせてライブラリへ戻す(再追加で修復できる)。
+    if (!(await hasBookFile(id))) {
+      toast('本のデータが見つかりません。削除して再追加してください')
+      location.hash = ''
+      return
+    }
     showScreen('reader')
     await reader.open(record) // 本体は Service Worker が /bibi-book/<id>.epub で配信
 
@@ -94,6 +101,8 @@ function wireGlobal() {
     e.target.value = '' // 同じ選択を連続で行えるようにリセット
   }
   $('file-input').addEventListener('change', onPicked)
+  // 非常脱出ボタン: Bibi の状態に関わらず確実にライブラリへ戻す(白画面対策)。
+  $('reader-escape').addEventListener('click', () => goLibrary())
   window.addEventListener('hashchange', route)
 }
 
