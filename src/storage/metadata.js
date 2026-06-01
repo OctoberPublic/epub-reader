@@ -58,3 +58,14 @@ export async function updateProgress(id, { cfi, fraction }) {
     return reqToPromise(s.put(record))
   })
 }
+
+// お気に入り状態を更新する。lastOpenedAt は触らない
+// (お気に入り操作で「最近開いた順」が乱れないように)。
+export async function setFavorite(id, favorite) {
+  return mutate('books', async (s) => {
+    const record = await reqToPromise(s.get(id))
+    if (!record) return
+    record.favorite = !!favorite
+    return reqToPromise(s.put(record))
+  })
+}

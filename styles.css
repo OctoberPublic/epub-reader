@@ -141,6 +141,92 @@ button { cursor: pointer; font-family: inherit; }
 }
 .book-author { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
+/* 検索バー(🔍タップで展開) */
+.lib-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px 8px;
+  padding-left: calc(env(safe-area-inset-left) + 16px);
+  padding-right: calc(env(safe-area-inset-right) + 16px);
+}
+.search-input {
+  flex: 1;
+  font: inherit;
+  font-size: 15px;
+  color: var(--chrome-fg);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 8px 12px;
+  -webkit-user-select: text; /* body が user-select:none のため明示 */
+  user-select: text;
+}
+.search-input::placeholder { color: var(--muted); }
+.search-input:focus { outline: none; border-color: var(--accent); }
+.search-clear {
+  flex: 0 0 auto;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+.search-clear:active { background: rgba(127, 127, 127, 0.2); }
+
+/* 並べ替えのポップオーバーメニュー */
+.lib-sort-wrap { position: relative; display: inline-flex; }
+.lib-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 168px;
+  background: var(--drawer-bg);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  padding: 6px;
+  z-index: 20;
+}
+.lib-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--chrome-fg);
+  font-size: 14px;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 8px;
+}
+.lib-menu-item:active { background: rgba(127, 127, 127, 0.2); }
+.lib-menu-item.is-selected::after { content: '✓'; color: var(--accent); }
+
+/* お気に入りフィルタ active(ツールバー) */
+.icon-button.is-active { color: var(--accent); }
+
+/* カードのお気に入りボタン(top-left。削除ボタンは top-right で衝突しない) */
+.book-favorite {
+  position: absolute;
+  top: 4px; left: 4px;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 15px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.book-favorite.is-on { color: var(--accent); }
+
 .empty-state {
   flex: 1;
   display: flex;

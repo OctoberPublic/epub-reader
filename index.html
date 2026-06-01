@@ -48,9 +48,23 @@
     <header class="lib-header">
       <h1>ライブラリ</h1>
       <div class="lib-actions">
+        <button id="search-toggle" class="icon-button" aria-label="検索" title="検索">🔍</button>
+        <div class="lib-sort-wrap">
+          <button id="sort-button" class="icon-button" aria-label="並び替え" title="並び替え" aria-haspopup="true" aria-expanded="false">▾</button>
+          <div id="sort-menu" class="lib-menu" role="menu" hidden>
+            <button class="lib-menu-item" role="menuitemradio" data-sort="recent">最近開いた順</button>
+            <button class="lib-menu-item" role="menuitemradio" data-sort="name">名前順</button>
+            <button class="lib-menu-item" role="menuitemradio" data-sort="added">追加順</button>
+          </div>
+        </div>
+        <button id="favorite-filter" class="icon-button" aria-label="お気に入りだけ表示" title="お気に入りだけ表示" aria-pressed="false">♡</button>
         <button id="import-button" class="icon-button" aria-label="本を追加(複数可)" title="本を追加(複数選択可)">＋</button>
       </div>
     </header>
+    <div id="search-bar" class="lib-search-bar" hidden>
+      <input id="search-input" class="search-input" type="search" inputmode="search" autocomplete="off" placeholder="タイトル・著者で検索" aria-label="検索" />
+      <button id="search-clear" class="search-clear" aria-label="クリア" hidden>×</button>
+    </div>
     <div id="book-grid" class="book-grid"></div>
     <div id="library-empty" class="empty-state" hidden>
       <p>まだ本がありません。</p>
