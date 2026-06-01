@@ -246,6 +246,10 @@ button { cursor: pointer; font-family: inherit; }
 
 /* ============ リーダー(Bibi iframe) ============ */
 #reader-view { position: absolute; inset: 0; background: #fff; }
+/* リーダー表示中(main.js が html.reading を付与)はルートも白に。これで iOS PWA で
+   最下部セーフエリア(ホームインジケータ領域)に body の暗色が透けて黒帯になるのを防ぐ。
+   ライブラリへ戻ると class が外れ、ダーククロム(--chrome-bg)へ戻る。 */
+html.reading, html.reading body { background: #fff; }
 /* Bibi iframe はセーフエリア内に収める(iframe 内は env() を継承しないため親で対応)。
    これで Bibi のメニューバーや本文が iOS のステータスバー/ホームインジケータと重ならない。 */
 .bibi-surface {

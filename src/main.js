@@ -18,6 +18,11 @@ const reader = new BibiReader({ onBack: () => goLibrary(), onError: (msg) => toa
 function showScreen(name) {
   $('library-view').hidden = name !== 'library'
   $('reader-view').hidden = name !== 'reader'
+  // リーダー表示中は最下部のセーフエリア(iOS のホームインジケータ領域)まで白くする。
+  // #reader-view(白)は inset:0 で全面を覆うが、iOS PWA では最下部セーフエリアに
+  // body の暗色(--chrome-bg)が透けて黒帯に見えることがあるため、ルート(html/body)の
+  // 背景もこの間だけ白へ。ライブラリのダーククロムは class が外れて元に戻る。
+  document.documentElement.classList.toggle('reading', name === 'reader')
 }
 
 function goLibrary() {
