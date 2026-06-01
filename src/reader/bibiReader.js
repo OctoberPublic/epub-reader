@@ -192,15 +192,19 @@ export class BibiReader {
         '.bibi-app-single-row{display:block;width:100%;box-sizing:border-box;padding:14px 16px;margin-top:6px;border-top:1px solid rgba(127,127,127,.3);font-size:14px;line-height:1.4;text-align:center;cursor:pointer;color:inherit}' +
         '.bibi-app-single-row small{display:block;margin-top:3px;font-size:11px;opacity:.65}' +
         '.bibi-app-single-row:active{background:rgba(127,127,127,.18)}' +
-        // 縦書き小説(reflowable)のページ送りを横スライド演出にする。Bibi はページ送りを
-        // #bibi-main のスクロール位置の一発代入で行う(この本では縦スクロール)ため、スクロール
-        // 自体は瞬時のままにして、#bibi-main-book へ横方向 translateX アニメを重ねて「横スライド」
-        // に見せる。送り(forward)は左から、戻し(back)は右から入れる。マンガ(pre-paginated)は
-        // スプレッド切替方式の別経路なので、この演出は付けない(#setupPageSlide で reflowable 限定)。
-        '@keyframes bibiAppSlideFwd{from{transform:translateX(-30%)}to{transform:translateX(0)}}' +
-        '@keyframes bibiAppSlideBack{from{transform:translateX(30%)}to{transform:translateX(0)}}' +
-        '#bibi-main-book.bibiAppFwd{animation:bibiAppSlideFwd .22s ease-out}' +
-        '#bibi-main-book.bibiAppBack{animation:bibiAppSlideBack .22s ease-out}'
+        // 縦書き小説(reflowable)のページ送りを横スライド演出にする。本文ページは入れ子の
+        // iframe.item の中に描画される。iOS Safari は「iframe の祖先」を transform アニメしても
+        // iframe の中身を追従させず最終位置へ瞬間移動する(既知の WebKit 挙動)。そこで演出対象を
+        // 祖先 #bibi-main-book ではなく、表示中の iframe.item 自身にする(animated 要素=iframe なので
+        // 祖先 iframe 合成バグを回避。#bibi-main-book の transition:transform .5s とも競合しない)。
+        // translate3d + will-change で確実に合成レイヤ化し iOS でも滑らかに動かす。送り(forward,
+        // Distance>0, R→L 進行)は左から、戻し(back)は右から入れる(transform-origin:0 0 だが translateX
+        // は原点非依存)。マンガ(pre-paginated)は #setupPageSlide の reflowable 限定で対象外。
+        '@keyframes bibiAppSlideFwd{from{transform:translate3d(-30%,0,0)}to{transform:translate3d(0,0,0)}}' +
+        '@keyframes bibiAppSlideBack{from{transform:translate3d(30%,0,0)}to{transform:translate3d(0,0,0)}}' +
+        'iframe.item.bibiAppFwd,iframe.item.bibiAppBack{will-change:transform;-webkit-backface-visibility:hidden;backface-visibility:hidden;-webkit-transition:none!important;transition:none!important}' +
+        'iframe.item.bibiAppFwd{-webkit-animation:bibiAppSlideFwd .22s ease-out;animation:bibiAppSlideFwd .22s ease-out}' +
+        'iframe.item.bibiAppBack{-webkit-animation:bibiAppSlideBack .22s ease-out;animation:bibiAppSlideBack .22s ease-out}'
       doc.head.appendChild(st)
     }
 
@@ -230,15 +234,15 @@ export class BibiReader {
 
   // 縦書き小説(reflowable)のページ送りを横スライドで見せる。Bibi は #bibi-main のスクロール
   // 位置を一発代入してページを送る(この本では縦スクロール)ため、スクロール自体は瞬時のまま、
-  // 送り方向に応じて #bibi-main-book へ横 translateX アニメ(.22s)を重ねる。
+  // 送り方向に応じて「表示中ページの iframe.item 自身」へ横スライドのアニメ(.22s)を重ねる。
   //
+  // ※ アニメ対象は祖先 #bibi-main-book ではなく iframe.item 自身。本文は iframe.item の中に
+  //    描画されるが、iOS は「iframe の祖先」を transform しても中身が追従せず瞬間移動する
+  //    (= 実機で「ページは変わるがスライドしない」の原因)。iframe 自身を動かせば回避できる。
   // トリガは Bibi が document に発火するページ送りイベント(OS 非依存。実測でイベント名/到達を確認):
   //   bibi:is-going-to:move-by … 送り発生時。detail.Distance の符号が方向(+1=送り / -1=戻し)。
-  //   bibi:flipped             … 移動完了・1回。ここで控えた方向にスライドを起動。
-  // ※ 当初は #bibi-main の scroll イベントで検知していたが、iOS ではエンジンのプログラム的な
-  //    スクロール位置代入で scroll イベントが確実に発火せず、実機でスライドが出なかった
-  //    (ヘッドレス Chromium では発火するため気付けなかった)。OS 非依存の上記 CustomEvent に変更。
-  // ※ #bibi-main に overflow を当てると Bibi のスクロール処理が再帰してスタックする(実測)ため触らない。
+  //   bibi:flipped             … 移動完了・1回(この時点で新ページが .spread-box.current)。
+  //                               控えた方向で current の iframe.item を滑り込ませる。
   #setupPageSlide(doc) {
     const html = doc.documentElement
     if (!html || !html.classList.contains('book-reflowable')) return // マンガ等は対象外
@@ -249,24 +253,51 @@ export class BibiReader {
 
     let pendingDir = 0 // +1=送り / -1=戻し / 0=なし
     let ready = false
+    let animating = [] // クラスを付けた iframe 群(animationend でまとめて外す)
     setTimeout(() => { ready = true }, 1200) // 開いた直後の復帰移動は演出しない
-    const clear = () => book.classList.remove('bibiAppFwd', 'bibiAppBack')
-    book.addEventListener('animationend', clear)
+
+    const clear = () => {
+      for (const el of animating) el.classList.remove('bibiAppFwd', 'bibiAppBack')
+      animating = []
+    }
+    const onEnd = () => clear()
+
+    // bibi:flipped 時点で新ページが既に .spread-box.current。無ければ画面内の iframe.item で代替。
+    const visibleItems = () => {
+      let items = [...book.querySelectorAll('.spread-box.current .item-box iframe.item')]
+      if (!items.length) {
+        const vw = (doc.defaultView && doc.defaultView.innerWidth) || 0
+        items = [...book.querySelectorAll('iframe.item')].filter((el) => {
+          const r = el.getBoundingClientRect()
+          return r.width > 0 && r.right > 0 && r.left < vw
+        })
+      }
+      return items
+    }
 
     // 送り発生時に方向(Distance の符号)を控える
     doc.addEventListener('bibi:is-going-to:move-by', (e) => {
       const dist = e && e.detail && typeof e.detail.Distance === 'number' ? e.detail.Distance : 0
       pendingDir = dist > 0 ? 1 : dist < 0 ? -1 : 0
     })
-    // 移動完了(1回)。控えた方向にスライド
+    // 移動完了(1回)。控えた方向で current ページの iframe.item を滑り込ませる
     doc.addEventListener('bibi:flipped', () => {
       const dir = pendingDir
       pendingDir = 0
       if (!ready || !dir) return
       if (html.classList.contains('slider-sliding')) return // スライダー操作中は演出しない
+      if (html.classList.contains('zoomed-in') || html.classList.contains('transforming')) return // ズーム中は触らない
       clear()
-      void book.offsetWidth // アニメ再起動のためリフロー
-      book.classList.add(dir > 0 ? 'bibiAppFwd' : 'bibiAppBack')
+      const items = visibleItems()
+      if (!items.length) return
+      const cls = dir > 0 ? 'bibiAppFwd' : 'bibiAppBack'
+      for (const el of items) {
+        el.removeEventListener('animationend', onEnd)
+        el.addEventListener('animationend', onEnd)
+        void el.offsetWidth // アニメ再起動のためリフロー(要素ごと)
+        el.classList.add(cls)
+      }
+      animating = items
     })
   }
 
