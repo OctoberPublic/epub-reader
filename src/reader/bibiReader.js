@@ -201,7 +201,12 @@ export class BibiReader {
         '.bibi-icon-to-library:before{font:22px/1 "Material Icons";-webkit-font-feature-settings:"liga";font-feature-settings:"liga";text-transform:none;-webkit-font-smoothing:antialiased;content:"arrow_back"}' +
         '.bibi-app-single-row{display:block;width:100%;box-sizing:border-box;padding:14px 16px;margin-top:6px;border-top:1px solid rgba(127,127,127,.3);font-size:14px;line-height:1.4;text-align:center;cursor:pointer;color:inherit}' +
         '.bibi-app-single-row small{display:block;margin-top:3px;font-size:11px;opacity:.65}' +
-        '.bibi-app-single-row:active{background:rgba(127,127,127,.18)}'
+        '.bibi-app-single-row:active{background:rgba(127,127,127,.18)}' +
+        // ヘッダ中央の本タイトル(中央タップでメニューと一緒にフェード表示)。
+        // 白背景に濃いグレー文字。長いタイトルは省略記号で切り、左右ボタン群とは margin で離す。
+        '#bibi-app-title{position:absolute;top:0;left:0;right:0;height:39px;line-height:39px;margin:0 64px;text-align:center;font-size:13px;color:#707070;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;opacity:0;-webkit-transition:opacity .75s linear;transition:opacity .75s linear}' +
+        // メニュー開閉と同じクラスに opacity を紐付け、同じタイミング・同じフェードで出入りさせる。
+        'html.menu-opened #bibi-app-title,html.panel-opened #bibi-app-title,html.subpanel-opened #bibi-app-title,div#bibi-menu.hover #bibi-app-title{opacity:1}'
       doc.head.appendChild(st)
     }
 
@@ -225,8 +230,27 @@ export class BibiReader {
 
     // 既存ボタンの右隣に「ライブラリ」を入れる。単独/組 切替は設定(歯車)パネル内へ。
     ul.appendChild(makeBtn('bibi-button-to-library', 'bibi-icon-to-library', 'ライブラリ', () => this.#onBack?.()))
+    this.#injectTitle(doc)
     this.#injectSinglePageRow(doc)
     this.#setupPageSlide(doc)
+  }
+
+  // ヘッダ(#bibi-menu)の中央へ「本のタイトル - 著者名」を差し込む。著者名が無ければタイトルのみ。
+  // 配置・フェードは上で注入した CSS(#bibi-app-title)が担う。中央タップ判定を妨げないよう
+  // pointer-events:none。再オープン時は iframe ごと作り直されるため常に現在の本に一致する。
+  #injectTitle(doc) {
+    if (doc.getElementById('bibi-app-title')) return // 二重注入防止
+    const menu = doc.getElementById('bibi-menu')
+    if (!menu) return
+    const rec = this.#record || {}
+    const title = (rec.title ?? '').trim()
+    const author = (rec.author ?? '').trim()
+    const label = author ? `${title} - ${author}` : title
+    if (!label) return
+    const el = doc.createElement('div')
+    el.id = 'bibi-app-title'
+    el.textContent = label // textContent で安全に設定(HTML エスケープ不要)
+    menu.appendChild(el)
   }
 
   // 縦書き小説(reflowable)のページ送りを横スライドで見せる。Bibi は paged モードのとき、
