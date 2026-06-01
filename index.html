@@ -2,6 +2,30 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
+
+  <!-- Service Worker / キャッシュが壊れて真っ黒(本体が表示されない)になった時の自己回復用。
+       ?reset-sw を付けて開くと、SW を登録解除し Cache を全削除してから通常URLで読み直す。
+       本のデータ(IndexedDB)は消さないので、本棚はそのまま残る。 -->
+  <script>
+    (function () {
+      if (location.search.indexOf('reset-sw') === -1) return
+      var done = function () { location.replace(location.pathname) }
+      Promise.resolve().then(async function () {
+        try {
+          if ('serviceWorker' in navigator) {
+            var regs = await navigator.serviceWorker.getRegistrations()
+            await Promise.all(regs.map(function (r) { return r.unregister() }))
+          }
+          if (window.caches) {
+            var keys = await caches.keys()
+            await Promise.all(keys.map(function (k) { return caches.delete(k) }))
+          }
+        } catch (e) { /* 失敗しても読み直す */ }
+        done()
+      })
+    })()
+  </script>
+
   <!-- 全画面・ノッチ回避: viewport-fit=cover + safe-area-inset。ピンチズーム無効 -->
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no, maximum-scale=1" />
   <title>EPUB Reader</title>

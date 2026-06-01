@@ -137,6 +137,10 @@ async function boot() {
   // 旧形式(Blob)表紙を data URL へ移行(表紙破損対策)。失敗しても起動は続行。
   await migrateCovers().catch((e) => console.warn('表紙移行に失敗:', e))
 
+  // 起動時は常にライブラリから開く。前回開いていた本の URL(#read=...)が残っていても、
+  // 読み込めない本に当たって起動時に固まらないよう、フラグメントを消してから描画する。
+  if (/^#read=/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search)
+
   await route()
 }
 

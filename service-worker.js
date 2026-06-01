@@ -3,7 +3,7 @@
 // オンラインで取得したアプリシェル/ライブラリ資産は都度キャッシュへ保存するため、
 // 一度オンラインで開けばオフラインでも動作する。書籍データは OPFS にあるため SW の対象外。
 
-const CACHE = 'epub-reader-v12'
+const CACHE = 'epub-reader-v13'
 
 // 保存済み EPUB を仮想URL /bibi-book/<id>.epub で配信する(Bibi に .epub URL として渡すため)。
 // Bibi は zip の Central Directory を HTTP Range で読むので、Range 要求に対応する。
@@ -50,6 +50,27 @@ async function serveStoredBook(request, id) {
   })
 }
 
+// ページ本体(ナビゲーション)は network-first だが、ネットワークの遅延/停止で起動が真っ黒のまま
+// 固まらないよう短いタイムアウトを設ける。時間内に応答が無ければキャッシュのアプリシェルを返し、
+// その裏で取得したレスポンスは次回用にキャッシュ更新する(stale-while-revalidate 風)。
+async function handleNavigation(request) {
+  let timer
+  const net = fetch(request).then((response) => {
+    if (response && response.ok) caches.open(CACHE).then((c) => c.put(request, response.clone())).catch(() => {})
+    return response
+  })
+  try {
+    const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(null), 3500) })
+    const resp = await Promise.race([net, timeout])
+    if (resp) { clearTimeout(timer); return resp }
+  } catch { /* ネットワーク失敗 → 下でキャッシュにフォールバック */ }
+  clearTimeout(timer)
+  const cached = (await caches.match(request)) || (await caches.match('./index.html')) || (await caches.match('./'))
+  if (cached) return cached
+  // キャッシュも無ければネットの最終結果を待つ(初回オンライン起動など)
+  try { return await net } catch { return Response.error() }
+}
+
 // 起動に最低限必要なシェル。残り（Bibi 一式や src の各モジュール等）は実行時に network-first でキャッシュされる。
 const CORE = [
   './',
@@ -84,6 +105,14 @@ self.addEventListener('fetch', (event) => {
   const bookMatch = url.pathname.match(/\/bibi-book\/([^/]+)\.epub$/)
   if (bookMatch) {
     event.respondWith(serveStoredBook(request, decodeURIComponent(bookMatch[1])).catch(() => new Response('error', { status: 500 })))
+    return
+  }
+
+  // アプリ本体のページ遷移はタイムアウト付き network-first(真っ黒固まり対策)。
+  // Bibi の iframe(/vendor/bibi/)も mode=navigate だが、遅延時に親シェルを誤返ししないよう除外し、
+  // 従来どおり下の汎用 network-first に任せる。
+  if (request.mode === 'navigate' && !url.pathname.includes('/vendor/bibi/')) {
+    event.respondWith(handleNavigation(request))
     return
   }
 
