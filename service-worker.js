@@ -1,9 +1,14 @@
 // EPUB Reader Service Worker
-// 方針: network-first（オンライン時は常に最新、オフライン時はキャッシュにフォールバック）。
-// オンラインで取得したアプリシェル/ライブラリ資産は都度キャッシュへ保存するため、
-// 一度オンラインで開けばオフラインでも動作する。書籍データは OPFS にあるため SW の対象外。
+// 方針: アプリシェルは cache-first + 背景更新(stale-while-revalidate)。
+// 以前は network-first だったが、iOS でネットワーク応答が返らないと SW がナビゲーションを掴んだまま
+// 永久ロード→真っ黒で固まる事故が起きた。そこでアプリ本体(HTML/JS/CSS/Bibi 資産)は
+// キャッシュを即返し、裏でこっそり更新する。ネットワーク取得にはタイムアウトを設けて固着を防ぐ。
+// 更新は SW のバージョン更新(下記 CACHE)で install 時に全シェルを取り直して反映する
+// (= 反映は次回起動。デプロイ後の目視確認は「×2 再起動」で行う)。
+// 書籍本体は IndexedDB にあり、仮想URL /bibi-book/<id>.epub で配信する(キャッシュ対象外)。
 
-const CACHE = 'epub-reader-v13'
+const CACHE = 'epub-reader-v14'
+const NET_TIMEOUT_MS = 4000 // ネットワーク取得のタイムアウト(固着防止)
 
 // 保存済み EPUB を仮想URL /bibi-book/<id>.epub で配信する(Bibi に .epub URL として渡すため)。
 // Bibi は zip の Central Directory を HTTP Range で読むので、Range 要求に対応する。
@@ -50,40 +55,71 @@ async function serveStoredBook(request, id) {
   })
 }
 
-// ページ本体(ナビゲーション)は network-first だが、ネットワークの遅延/停止で起動が真っ黒のまま
-// 固まらないよう短いタイムアウトを設ける。時間内に応答が無ければキャッシュのアプリシェルを返し、
-// その裏で取得したレスポンスは次回用にキャッシュ更新する(stale-while-revalidate 風)。
-async function handleNavigation(request) {
+// ネットワーク取得にタイムアウトを付ける。時間内に応答が無ければ null を返す(=固着しない)。
+// 成功レスポンスはキャッシュへ保存する。
+async function fromNetwork(request) {
   let timer
-  const net = fetch(request).then((response) => {
-    if (response && response.ok) caches.open(CACHE).then((c) => c.put(request, response.clone())).catch(() => {})
-    return response
-  })
+  const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(null), NET_TIMEOUT_MS) })
   try {
-    const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(null), 3500) })
-    const resp = await Promise.race([net, timeout])
-    if (resp) { clearTimeout(timer); return resp }
-  } catch { /* ネットワーク失敗 → 下でキャッシュにフォールバック */ }
-  clearTimeout(timer)
-  const cached = (await caches.match(request)) || (await caches.match('./index.html')) || (await caches.match('./'))
-  if (cached) return cached
-  // キャッシュも無ければネットの最終結果を待つ(初回オンライン起動など)
-  try { return await net } catch { return Response.error() }
+    const response = await Promise.race([fetch(request), timeout])
+    if (!response) return null // タイムアウト
+    if (response.ok) caches.open(CACHE).then((c) => c.put(request, response.clone())).catch(() => {})
+    return response
+  } catch {
+    return null // ネットワーク失敗
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
-// 起動に最低限必要なシェル。残り（Bibi 一式や src の各モジュール等）は実行時に network-first でキャッシュされる。
+// アプリシェル/Bibi 資産用: キャッシュ優先 + 背景更新。キャッシュにあれば即返す(ネットワークの
+// 遅延/停止で固まらない)。無ければタイムアウト付きネットワーク取得。最後の砦としてシェルへフォールバック。
+async function cacheFirst(request) {
+  const cached = await caches.match(request)
+  if (cached) {
+    fromNetwork(request) // 背景でこっそり更新(失敗は無視)
+    return cached
+  }
+  const net = await fromNetwork(request)
+  if (net) return net
+  // 未キャッシュ かつ ネットワークも不可: ナビゲーションはアプリシェルを返す
+  if (request.mode === 'navigate') {
+    const shell = (await caches.match('./index.html')) || (await caches.match('./'))
+    if (shell) return shell
+  }
+  return Response.error()
+}
+
+// アプリシェル一式を事前キャッシュする。SW が固着→新SWでキャッシュを作り直しても、
+// 全モジュールが揃っているので起動時にネットワーク待ちで真っ黒にならない。
+// cache:'reload' で HTTP キャッシュを迂回し、デプロイ済みの最新を取り込む。
+// 個別取得が 1 つ失敗しても install 全体は止めない(allSettled)。
 const CORE = [
   './',
   './index.html',
   './manifest.webmanifest',
   './styles.css',
-  './src/main.js',
   './assets/icon.svg',
+  './assets/icon-maskable.svg',
+  './src/main.js',
+  './src/version.js',
+  './src/library/libraryView.js',
+  './src/library/importBook.js',
+  './src/reader/bibiReader.js',
+  './src/storage/db.js',
+  './src/storage/metadata.js',
+  './src/storage/books.js',
+  './src/storage/persist.js',
+  './src/util/blob.js',
+  './src/util/epubMeta.js',
+  './src/util/zipReader.js',
 ]
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(CORE)).then(() => self.skipWaiting())
+    caches.open(CACHE)
+      .then((cache) => Promise.allSettled(CORE.map((u) => cache.add(new Request(u, { cache: 'reload' })))))
+      .then(() => self.skipWaiting())
   )
 })
 
@@ -108,14 +144,6 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  // アプリ本体のページ遷移はタイムアウト付き network-first(真っ黒固まり対策)。
-  // Bibi の iframe(/vendor/bibi/)も mode=navigate だが、遅延時に親シェルを誤返ししないよう除外し、
-  // 従来どおり下の汎用 network-first に任せる。
-  if (request.mode === 'navigate' && !url.pathname.includes('/vendor/bibi/')) {
-    event.respondWith(handleNavigation(request))
-    return
-  }
-
   // Bibi の Range 対応プローブ(tryRangeRequest)を無効化し、抽出方式を必ず at-once に倒す。
   // Bibi は起動時に bibi.js 自身の URL へ Range:bytes=0-0 を投げ、206 が返ると on-the-fly
   // (Worker から Range で逐次読み)を選ぶ。だが iOS WebKit では iframe 内 Worker の fetch を
@@ -127,26 +155,12 @@ self.addEventListener('fetch', (event) => {
     return
   }
 
-  event.respondWith(
-    fetch(request)
-      .then((response) => {
-        // 成功したレスポンスを複製してキャッシュ更新
-        if (response && response.ok) {
-          const copy = response.clone()
-          caches.open(CACHE).then((cache) => cache.put(request, copy)).catch(() => {})
-        }
-        return response
-      })
-      .catch(async () => {
-        // オフライン: キャッシュにフォールバック
-        const cached = await caches.match(request)
-        if (cached) return cached
-        // ナビゲーションリクエストは index.html を返す（SPA フォールバック）
-        if (request.mode === 'navigate') {
-          const shell = await caches.match('./index.html')
-          if (shell) return shell
-        }
-        return Response.error()
-      })
-  )
+  // その他の Range 付き GET はキャッシュ優先に乗せず素通し(念のため。本アプリでは通常発生しない)
+  if (request.headers.has('range')) {
+    event.respondWith(fetch(request).catch(() => caches.match(request) || Response.error()))
+    return
+  }
+
+  // アプリ本体/Bibi 資産: キャッシュ優先 + 背景更新(真っ黒固着対策の要)
+  event.respondWith(cacheFirst(request))
 })
