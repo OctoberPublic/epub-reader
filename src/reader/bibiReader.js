@@ -51,6 +51,7 @@ export class BibiReader {
   #repinDoc = null         // re-pin リスナを張った contentDocument
   #onBibiRelayout = null   // bibi:resized/laid-out 用ハンドラ(再固定の解除に使う)
   #repinDebounce = null    // 再固定のデバウンス
+  #leaving = false         // 「ライブラリへ戻る」ボタンで離脱中。離脱タップが誘発しうるページ送りを保存しないためのガード
 
   constructor({ onBack, onError } = {}) {
     this.#onBack = onBack
@@ -183,6 +184,7 @@ export class BibiReader {
   // 位置が復元アンカーから動いて初めて保存する。これは入力検知ではなく実際の内容位置で判定する。
   #readAndSaveProgress() {
     if (!this.#iframe || !this.#record) return
+    if (this.#leaving) return // 「ライブラリへ戻る」ボタンの離脱タップが左端=ページ送りも誘発しうる。その+1を保存しない。
     if (!this.#restored) return // 復元(focus-on)前は保存しない。Bibi の概算位置で正しいアンカーを上書きしないため。
     let doc
     try { doc = this.#iframe.contentDocument } catch { return }
@@ -444,7 +446,9 @@ export class BibiReader {
     }
 
     // 既存ボタンの右隣に「ライブラリ」を入れる。単独/組 切替は設定(歯車)パネル内へ。
-    ul.appendChild(makeBtn('bibi-button-to-library', 'bibi-icon-to-library', 'ライブラリ', () => this.#onBack?.()))
+    // このボタンは左上=Bibi の左フリッパ(次ページ)ゾーンと重なり、タップが「ページ送り」も
+    // 誘発しうる(実機 iOS で観測)。離脱フラグを立て、その+1を保存しない(#readAndSaveProgress)。
+    ul.appendChild(makeBtn('bibi-button-to-library', 'bibi-icon-to-library', 'ライブラリ', () => { this.#leaving = true; this.#onBack?.() }))
     this.#injectTitle(doc)
     this.#injectSinglePageRow(doc)
     this.#setupPageSlide(doc)
@@ -583,6 +587,7 @@ export class BibiReader {
     this.#lastSavedPct = null
     this.#lastSavedLoc = null
     this.#restored = false
+    this.#leaving = false
   }
 
   // 進捗購読の後始末。iframe がまだ生きているうちに最終保存(デバウンス待ちの最新値を拾う)し、

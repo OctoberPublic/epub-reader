@@ -114,6 +114,13 @@ const readTo = async (page, dest, turns = 3) => {
   }
   await wait(1200)
 }
+// 「ライブラリへ戻る」ボタンを(メニュー非表示でも)プログラム的に押す。onClick→#leaving→onBack が走る。
+const clickLibraryButton = (page) => page.evaluate(() => {
+  const a = document.querySelector('#bibi-surface iframe').contentDocument.getElementById('bibi-button-to-library')
+  if (a) a.click()
+  return !!a
+})
+
 // 保存アンカー(item + sel)の要素が、今リーダーの画面内に見えているか
 const anchorVisible = (page, loc) => page.evaluate((loc) => {
   const f = document.querySelector('#bibi-surface iframe'); const d = f && f.contentDocument
@@ -222,6 +229,22 @@ const main = async () => {
   const e = await anchorVisible(page, savedLoc)
   const cfiE = await getSavedCfi(page)
   ok('落ち着いた後の再レイアウト(メニュー/ツールバー相当)でも保存し直されない', cfiE === cfiA && e.visible && e.cp === cp0, `cp=${e.cp} cfi=${cfiE === cfiA ? '不変' : 'ずれた:' + cfiE}`)
+
+  // (F) 「ライブラリへ戻る」ボタンは左上=Bibi 左フリッパと重なり、離脱タップが +1 ページ送りも誘発しうる
+  //     (実機 iOS)。その +1 を保存しないこと。move-by(+1)直後にボタンで離脱→再開しても進まない。
+  await page.setViewportSize(S1); await wait(200)
+  await setCfi(page, cfiA)
+  await reopen(page, {})
+  await page.evaluate(() => document.querySelector('#bibi-surface iframe').contentDocument
+    .dispatchEvent(new CustomEvent('bibi:commands:move-by', { detail: { Distance: 1 } }))) // 離脱タップが誘発する +1 を模擬
+  await wait(150)
+  const had = await clickLibraryButton(page)
+  await page.waitForSelector('#library-view:not([hidden])', { timeout: 8000 }).catch(() => {})
+  await wait(500)
+  await page.click('.book-card'); await waitReaderReady(page)
+  const fcfi = await getSavedCfi(page)
+  const fv = await anchorVisible(page, savedLoc)
+  ok('「ライブラリへ戻る」ボタンの離脱が誘発する+1は保存されない', had && fcfi === cfiA && fv.visible && fv.cp === cp0, `cfi=${fcfi === cfiA ? '不変' : 'ずれ:' + fcfi} cp=${fv.cp}`)
 
   ok('未捕捉の JS 例外が無い', errors.length === 0, errors.slice(0, 3).join(' | '))
 
