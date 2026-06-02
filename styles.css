@@ -112,13 +112,6 @@ button { cursor: pointer; font-family: inherit; }
   color: #ddd;
   background: linear-gradient(135deg, #3a3a3c, #2a2a2c);
 }
-.book-progress {
-  position: absolute;
-  left: 0; right: 0; bottom: 0;
-  height: 4px;
-  background: rgba(255, 255, 255, 0.25);
-}
-.book-progress-fill { height: 100%; background: var(--accent); }
 .book-delete {
   position: absolute;
   top: 4px; right: 4px;
@@ -131,6 +124,8 @@ button { cursor: pointer; font-family: inherit; }
   line-height: 1;
 }
 .book-meta { margin-top: 6px; }
+/* 進捗パーセンテージ(サムネイル下・左寄せ) */
+.book-percent { font-size: 11px; color: var(--accent); margin-bottom: 2px; }
 .book-title {
   font-size: 13px;
   line-height: 1.3;
@@ -209,6 +204,9 @@ button { cursor: pointer; font-family: inherit; }
 
 /* お気に入りフィルタ active(ツールバー) */
 .icon-button.is-active { color: var(--accent); }
+/* ツールバーの SVG アイコン(読みたい本フィルタ)。active で枠線→塗りに切替 */
+.icon-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; vertical-align: middle; }
+.icon-button.is-active svg { fill: var(--accent); stroke: var(--accent); }
 
 /* カードのお気に入りボタン(top-left。削除ボタンは top-right で衝突しない) */
 .book-favorite {
@@ -226,6 +224,21 @@ button { cursor: pointer; font-family: inherit; }
   justify-content: center;
 }
 .book-favorite.is-on { color: var(--accent); }
+
+/* カードの読みたい本ボタン(お気に入りの下。ブックマークの線画↔塗りで状態表示) */
+.book-want {
+  position: absolute;
+  top: 36px; left: 4px;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.55);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.book-want svg { width: 16px; height: 16px; fill: none; stroke: #fff; stroke-width: 2; }
+.book-want.is-on svg { fill: var(--accent); stroke: var(--accent); }
 
 .empty-state {
   flex: 1;

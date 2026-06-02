@@ -1,5 +1,5 @@
 // 書籍メタデータ + 読書位置を IndexedDB の 'books' ストアに保存する。
-// レコード: { id, title, author, cover(dataURL), dir, sourceName, size, addedAt, lastOpenedAt, cfi, fraction, forceFixedLayout? }
+// レコード: { id, title, author, cover(dataURL), dir, sourceName, size, addedAt, lastOpenedAt, cfi, fraction, forceFixedLayout?, favorite?, wantToRead? }
 // 表紙は data URL 文字列(cover)で保持する(Blob 再保存による iOS の破損回避。詳細は util/blob.js)。
 
 import { store, reqToPromise, mutate } from './db.js'
@@ -67,6 +67,16 @@ export async function setFavorite(id, favorite) {
     const record = await reqToPromise(s.get(id))
     if (!record) return
     record.favorite = !!favorite
+    return reqToPromise(s.put(record))
+  })
+}
+
+// 「読みたい本」状態を更新する。setFavorite と同様、lastOpenedAt は触らない。
+export async function setWantToRead(id, wantToRead) {
+  return mutate('books', async (s) => {
+    const record = await reqToPromise(s.get(id))
+    if (!record) return
+    record.wantToRead = !!wantToRead
     return reqToPromise(s.put(record))
   })
 }

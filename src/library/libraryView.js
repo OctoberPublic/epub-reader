@@ -3,10 +3,14 @@
 // 読み込んだ全件を #books に保持し、検索語・並べ替え・フィルタを適用して #render() で描画する。
 // DB 再読込が要るのは refresh() と削除時のみ(検索/ソート/フィルタ切替は #render() だけ)。
 
-import { getAllBooks, deleteBook, setFavorite } from '../storage/metadata.js'
+import { getAllBooks, deleteBook, setFavorite, setWantToRead } from '../storage/metadata.js'
 import { deleteBookFile } from '../storage/books.js'
 
 const $ = (id) => document.getElementById(id)
+
+// 「読みたい本」用のフラットなブックマークアイコン(モノクロ)。塗り分けは CSS のクラスで行う
+// (.book-want / .is-on、index.html の #want-filter と共通)。1 パスで枠線↔塗りを切り替える。
+const BOOKMARK_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"/></svg>'
 
 // 並べ替えの比較関数。
 // || を使うのは lastOpenedAt===0(未開封)のとき addedAt にフォールバックさせるため(?? だと 0 のまま)。
@@ -23,6 +27,7 @@ export class LibraryView {
   #query = ''
   #sortMode = 'recent'
   #favoriteOnly = false
+  #wantToReadOnly = false
   #sortMenuOpen = false
   #wired = false
   #onOutsideClick = null
@@ -66,6 +71,7 @@ export class LibraryView {
       item.addEventListener('click', () => this.#setSort(item.dataset.sort))
     }
     $('favorite-filter').addEventListener('click', () => this.#toggleFavoriteFilter())
+    $('want-filter').addEventListener('click', () => this.#toggleWantFilter())
   }
 
   // ---- 検索 ----
@@ -130,14 +136,30 @@ export class LibraryView {
     }
   }
 
-  // ---- お気に入りフィルタ ----
+  // ---- 絞り込みフィルタ(お気に入り / 読みたい本。相互排他) ----
   #toggleFavoriteFilter() {
     this.#favoriteOnly = !this.#favoriteOnly
-    const btn = $('favorite-filter')
-    btn.classList.toggle('is-active', this.#favoriteOnly)
-    btn.setAttribute('aria-pressed', this.#favoriteOnly ? 'true' : 'false')
-    btn.textContent = this.#favoriteOnly ? '♥' : '♡'
+    if (this.#favoriteOnly) this.#wantToReadOnly = false // 相互排他: 一方を ON にすると他方を OFF
+    this.#syncFilterButtons()
     this.#render()
+  }
+
+  #toggleWantFilter() {
+    this.#wantToReadOnly = !this.#wantToReadOnly
+    if (this.#wantToReadOnly) this.#favoriteOnly = false // 相互排他
+    this.#syncFilterButtons()
+    this.#render()
+  }
+
+  // 両フィルタボタンの見た目(active/aria/お気に入りの記号)を現在の状態へ揃える。
+  #syncFilterButtons() {
+    const fav = $('favorite-filter')
+    fav.classList.toggle('is-active', this.#favoriteOnly)
+    fav.setAttribute('aria-pressed', this.#favoriteOnly ? 'true' : 'false')
+    fav.textContent = this.#favoriteOnly ? '♥' : '♡'
+    const want = $('want-filter')
+    want.classList.toggle('is-active', this.#wantToReadOnly)
+    want.setAttribute('aria-pressed', this.#wantToReadOnly ? 'true' : 'false')
   }
 
   // ---- 描画(フィルタ → 検索 → 並べ替え → カード生成) ----
@@ -148,6 +170,7 @@ export class LibraryView {
     const q = this.#query.trim().toLowerCase()
     let list = this.#books
     if (this.#favoriteOnly) list = list.filter((b) => b.favorite === true)
+    if (this.#wantToReadOnly) list = list.filter((b) => b.wantToRead === true)
     if (q) list = list.filter((b) =>
       (b.title ?? '').toLowerCase().includes(q) ||
       (b.author ?? '').toLowerCase().includes(q))
@@ -170,9 +193,12 @@ export class LibraryView {
       if (p) p.textContent = 'まだ本がありません。'
       if (btn) btn.hidden = false
     } else {
-      if (p) p.textContent = (this.#favoriteOnly && !this.#query.trim())
-        ? 'お気に入りの本がありません。'
-        : '該当する本がありません。'
+      const noFilterQuery = !this.#query.trim()
+      if (p) {
+        if (this.#favoriteOnly && noFilterQuery) p.textContent = 'お気に入りの本がありません。'
+        else if (this.#wantToReadOnly && noFilterQuery) p.textContent = '読みたい本がありません。'
+        else p.textContent = '該当する本がありません。'
+      }
       if (btn) btn.hidden = true
     }
   }
@@ -214,18 +240,6 @@ export class LibraryView {
       coverWrap.append(placeholder())
     }
 
-    // 進捗バー
-    const fraction = Math.max(0, Math.min(1, book.fraction ?? 0))
-    if (fraction > 0) {
-      const bar = document.createElement('div')
-      bar.className = 'book-progress'
-      const fill = document.createElement('div')
-      fill.className = 'book-progress-fill'
-      fill.style.width = `${Math.round(fraction * 100)}%`
-      bar.append(fill)
-      coverWrap.append(bar)
-    }
-
     // 削除ボタン(右上)
     const del = document.createElement('button')
     del.className = 'book-delete'
@@ -250,8 +264,29 @@ export class LibraryView {
     })
     coverWrap.append(fav)
 
+    // 読みたい本ボタン(お気に入りの下。ブックマークの線画↔塗りで状態表示)
+    const isWant = book.wantToRead === true
+    const want = document.createElement('button')
+    want.className = 'book-want' + (isWant ? ' is-on' : '')
+    want.setAttribute('aria-label', isWant ? '読みたいリストから削除' : '読みたいリストに追加')
+    want.setAttribute('aria-pressed', isWant ? 'true' : 'false')
+    want.innerHTML = BOOKMARK_SVG
+    want.addEventListener('click', (e) => {
+      e.stopPropagation()
+      this.#toggleWantToRead(book)
+    })
+    coverWrap.append(want)
+
     const meta = document.createElement('div')
     meta.className = 'book-meta'
+    // 進捗パーセンテージ(サムネイル下・左寄せ。読み始めた本のみ表示)
+    const fraction = Math.max(0, Math.min(1, book.fraction ?? 0))
+    if (fraction > 0) {
+      const percent = document.createElement('div')
+      percent.className = 'book-percent'
+      percent.textContent = `${Math.round(fraction * 100)}%`
+      meta.append(percent)
+    }
     const title = document.createElement('div')
     title.className = 'book-title'
     title.textContent = book.title ?? 'Untitled'
@@ -280,6 +315,23 @@ export class LibraryView {
       if (rec && rec !== book) rec.favorite = !next
     }
     this.#render() // お気に入りフィルタ表示中に解除したカードを即座に消すため
+  }
+
+  async #toggleWantToRead(book) {
+    const next = !(book.wantToRead === true)
+    // 楽観更新(#toggleFavorite と同じ理由で book と #books 内の同 id 要素の両方を更新)。
+    book.wantToRead = next
+    const rec = this.#books.find((b) => b.id === book.id)
+    if (rec && rec !== book) rec.wantToRead = next
+    try {
+      await setWantToRead(book.id, next)
+    } catch (e) {
+      console.error('読みたいリストの更新に失敗:', e)
+      this.#onError?.('読みたいリストの更新に失敗しました')
+      book.wantToRead = !next
+      if (rec && rec !== book) rec.wantToRead = !next
+    }
+    this.#render() // 読みたいフィルタ表示中に解除したカードを即座に消すため
   }
 
   async #confirmDelete(book) {

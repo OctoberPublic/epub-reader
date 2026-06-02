@@ -16,7 +16,7 @@
 // iframe を transform しないのが要点で、iOS の iframe 合成バグを原理的に回避する。
 // 横書き本/マンガ=pre-paginated は pagination=x の影響を受けず、スライド演出も対象外。
 
-import { putBook } from '../storage/metadata.js'
+import { putBook, updateProgress } from '../storage/metadata.js'
 
 const $ = (id) => document.getElementById(id)
 
@@ -40,6 +40,10 @@ export class BibiReader {
   #autoShowTimer = null
   #loaded = false
   #failed = false
+  #progressDoc = null      // 進捗リスナを張った contentDocument(二重登録防止の基準)
+  #onBibiProgress = null   // bibi:scrolled/bibi:flipped 用ハンドラ(解除に使う)
+  #progressDebounce = null
+  #lastSavedPct = null     // 直近に保存した % (無変化スキップ用)
 
   constructor({ onBack, onError } = {}) {
     this.#onBack = onBack
@@ -140,6 +144,43 @@ export class BibiReader {
     if (this.#autoShowTimer) { clearTimeout(this.#autoShowTimer); this.#autoShowTimer = null }
     const esc = $('reader-escape')
     if (esc) esc.hidden = true
+    this.#setupProgress() // 本文が出たので読書進捗の購読を開始
+  }
+
+  // 読書進捗の取得を開始する。Bibi の読書率は iframe 内 .bibi-nombre-percent に整数%で表示され、
+  // bibi:scrolled/bibi:flipped 発火時に更新される。これを親から購読して読み取り、保存する。
+  // (要素の読み取りはイベント発火時に行うので、.bibi-nombre-percent の生成タイミングを気にしなくてよい)
+  #setupProgress() {
+    if (!this.#iframe) return
+    let doc
+    try { doc = this.#iframe.contentDocument } catch { return }
+    if (!doc || this.#progressDoc === doc) return // 二重登録防止(本ごと1回)
+    this.#progressDoc = doc
+    // 高頻度の bibi:is-scrolling は購読しない。デバウンスで書き込み頻度を抑える。
+    const handler = () => {
+      if (this.#progressDebounce) clearTimeout(this.#progressDebounce)
+      this.#progressDebounce = setTimeout(() => this.#readAndSaveProgress(), 800)
+    }
+    this.#onBibiProgress = handler
+    doc.addEventListener('bibi:scrolled', handler) // ページ送り/スクロール両対応のため両方購読
+    doc.addEventListener('bibi:flipped', handler)
+  }
+
+  // 現在の読書率(%)を読み取り、変化していれば fraction(0..1) として保存する。
+  #readAndSaveProgress() {
+    if (!this.#iframe || !this.#record) return
+    let doc
+    try { doc = this.#iframe.contentDocument } catch { return }
+    if (!doc) return
+    const el = doc.querySelector('.bibi-nombre-percent')
+    if (!el) return // 未生成なら静かに skip(次イベントで再取得)
+    const m = (el.textContent || '').match(/(\d+)/)
+    if (!m) return
+    const pct = Math.max(0, Math.min(100, parseInt(m[1], 10)))
+    if (pct === this.#lastSavedPct) return // 無変化(100%後の再発火含む)はスキップ
+    this.#lastSavedPct = pct
+    // await しない(読書を妨げない)。updateProgress が lastOpenedAt も更新する(意図どおり)。
+    updateProgress(this.#record.id, { fraction: pct / 100 }).catch((e) => console.warn('進捗の保存に失敗:', e))
   }
 
   // ロード失敗(iframe error / タイムアウト): エラー表示して脱出ボタンを露出する。
@@ -354,6 +395,7 @@ export class BibiReader {
   destroy() {
     this.#clearPoll()
     this.#stopResizeFollow()
+    this.#teardownProgress() // iframe 破棄前に最終保存＋リスナ解除
     if (this.#loadTimer) { clearTimeout(this.#loadTimer); this.#loadTimer = null }
     if (this.#autoShowTimer) { clearTimeout(this.#autoShowTimer); this.#autoShowTimer = null }
     const esc = $('reader-escape')
@@ -362,5 +404,21 @@ export class BibiReader {
       this.#iframe.remove()
       this.#iframe = null
     }
+    this.#lastSavedPct = null
+  }
+
+  // 進捗購読の後始末。iframe がまだ生きているうちに最終保存(デバウンス待ちの最新値を拾う)し、
+  // リスナとタイマーを解除する。完全保証ではない(連続めくり直後の破棄)が、次回開いた時に補正される。
+  #teardownProgress() {
+    if (this.#progressDebounce) { clearTimeout(this.#progressDebounce); this.#progressDebounce = null }
+    this.#readAndSaveProgress() // ベストエフォートの最終保存(contentDocument はまだ生存)
+    if (this.#progressDoc && this.#onBibiProgress) {
+      try {
+        this.#progressDoc.removeEventListener('bibi:scrolled', this.#onBibiProgress)
+        this.#progressDoc.removeEventListener('bibi:flipped', this.#onBibiProgress)
+      } catch { /* 破棄済み等は無視 */ }
+    }
+    this.#progressDoc = null
+    this.#onBibiProgress = null
   }
 }
