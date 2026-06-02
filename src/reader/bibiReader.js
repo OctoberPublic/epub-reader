@@ -25,8 +25,12 @@ const defaultSingles = (record) => (Array.isArray(record.singlePages) ? record.s
 
 // 「ユーザーがページを動かした」と判定する入力イベント。生入力(キャッチャ/スライダ/キー)に加え、
 // Bibi 正規化のタップ/キー(入れ子 iframe でも外側 doc に届く)も含める。これ直後のページ送りだけ保存する。
+// bibi:is-going-to:move-by は「相対ページ送り直前」に外側 doc へ発火する(タップ/スワイプ/キー/スライダ
+// 全てに共通)。実機ではタップ/スワイプの生入力が入れ子の本文 iframe に入り外側 doc へ届かないことが
+// あり、それだと #userMoved が立たず進捗が保存されない。move-by はその穴を確実に塞ぐ(復元/再固定の
+// focus-on では発火しないことを確認済みなので、累積ズレ防止のガードは保ったまま=安全)。
 const USER_INPUT_EVENTS = ['pointerdown', 'pointermove', 'mousedown', 'touchstart', 'touchmove', 'keydown',
-  'bibi:tapped', 'bibi:doubletapped', 'bibi:pressed-key']
+  'bibi:tapped', 'bibi:doubletapped', 'bibi:pressed-key', 'bibi:is-going-to:move-by']
 
 // ロード監視のタイミング(白画面で固まらないための保険)。
 const AUTO_SHOW_MS = 4000  // この秒数までにロードが終わらなければ脱出ボタンを自動表示
