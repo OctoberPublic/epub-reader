@@ -266,16 +266,21 @@ export class BibiReader {
     this.#restoreTimer = setTimeout(() => this.#restoreLocator(loc), 400)
   }
 
-  // 指定アンカーのページへ focus-on(対象要素が在る時だけ)。Bibi の focus-on コマンドへ
-  // Destination を渡す(CFI ナビと同じ機構=レイアウト非依存)。要素が見つからなければ動かさない
-  // 保存した {iipp}(章+章内割合)のページへ Bibi を移動させる。focus-on は IIPP を
-  // round(章内総ページ×割合) のページに解決する(=要素ではなくページ。長い段落でも後退しない)。
+  // 保存した {iipp}(章index + 章内割合)のページへ Bibi を移動させる(CFI ナビと同じ focus-on 機構=レイアウト非依存)。
+  // ※ focus-on に {IIPP} をそのまま渡してはいけない。エンジンは章内割合を
+  //   `1*String(IIPP).replace(/^\d*\./,"0.")` で算出する(「2.5」→「0.5」を意図)。だが章の先頭ページは
+  //   IIPP が整数(例: 2)になり小数点が無いため置換されず、割合=2 と誤算出 → Pages[round(章内総ページ×2)] が
+  //   範囲外になり limitMax で章末ページにクランプされる(=「章の先頭で閉じると章末で再開」バグの正体)。
+  //   そこで割合を自前(JS)で正しく分解し、{ItemIndex, PageProgressInItem} を渡す(IIPP は渡さない=バグ分岐を回避)。
+  //   エンジンは同じ Pages[round(章内総ページ×割合)] に解決する(=要素ではなくページ。長い段落でも後退しない)。
   #focusOnAnchor(loc) {
     let doc = null
     try { doc = this.#iframe && this.#iframe.contentDocument } catch { doc = null }
     if (!doc || !loc || typeof loc.iipp !== 'number') return false
+    const itemIndex = Math.floor(loc.iipp)
+    const pageProgress = loc.iipp - itemIndex // 章内割合 [0,1)。先頭ページは 0(エンジンの整数IIPP割合バグを避けるため自前算出)
     try {
-      doc.dispatchEvent(new CustomEvent('bibi:commands:focus-on', { detail: { Destination: { IIPP: loc.iipp }, Duration: 0 } }))
+      doc.dispatchEvent(new CustomEvent('bibi:commands:focus-on', { detail: { Destination: { ItemIndex: itemIndex, PageProgressInItem: pageProgress }, Duration: 0 } }))
     } catch { /* 失敗時は Bibi の概算復元のまま */ }
     return true
   }

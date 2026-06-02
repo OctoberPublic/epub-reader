@@ -3,6 +3,8 @@
 //      閉じ開きを繰り返しても前進クリープしない。開く最中にビューポートが揺れても保持。
 //  (A) メニューの「ライブラリ」ボタンの離脱タップが誘発する +1 ページ送りは保存されない。
 //  (C) メニュー非表示時はヘッダのボタン群(#bibi-menu-l/-r ul)の pointer-events が none(=効かない)。
+//  (整数IIPP) 章の先頭ページ(IIPP が整数=章内割合0)で閉じても、再開時に章末へ飛ばず先頭で再開する。
+//      ※ エンジンの focus-on は IIPP の割合を文字列正規表現で算出し、整数だと割合=その整数(>1)になり章末へクランプする。
 // 仕組み: bibiReader.js が現在位置を IIPP(章+章内割合)で cfi に保存し、focus-on {IIPP} でページ復元。
 //   再固定(re-pin)が再レイアウトのズレを現在地へ戻す。#leaving が離脱タップの +1 を保存しない。
 // 使い方: 別ターミナルで `node test/devserver.js` 起動後 `node test/smoke-resume.js`
@@ -169,6 +171,21 @@ const main = async () => {
   await moveBy(page, 2)
   const gcfi = await getCfi(page); let gl = null; try { gl = JSON.parse(gcfi) } catch {}
   ok('(A原因) 別本の古いキーがあっても自分の本の位置を保存(identifier で一意特定)', gl && Math.floor(gl.iipp) === 2 && (gl.iipp % 1) < 0.6, `cfi=${gcfi}`)
+
+  // (整数IIPP) 章の先頭ページ(IIPP=整数=章内割合0)で閉じても、再開は章末でなく先頭になる。
+  // 超長段落の章(item 2)は確実に複数ページにまたがるので、その先頭/末尾で先頭≠末尾を担保できる。
+  // ItemIndex≥1 が必須(IIPP=0 はエンジンの 1*"0"=0 で偶然正しく解決し、整数バグを露呈しないため)。
+  await page.setViewportSize(S1); await wait(150)
+  await reopen(page, {})
+  await focusOn(page, { ItemIndex: 2, PageProgressInItem: 0 }); await wait(1200) // 章(item2)の先頭ページへ
+  const firstP = await pageNo(page)
+  await focusOn(page, { ItemIndex: 2, PageProgressInItem: 0.999 }); await wait(900) // 同じ章の末尾ページ(比較用)
+  const lastP = await pageNo(page)
+  await focusOn(page, { ItemIndex: 2, PageProgressInItem: 0 }); await wait(1400) // 先頭へ戻し、整数IIPPとして保存させる
+  const fcfi = await getCfi(page); let fl = null; try { fl = JSON.parse(fcfi) } catch {}
+  ok('章先頭で IIPP が整数(章内割合0)として保存される', fl && Math.floor(fl.iipp) === 2 && (fl.iipp % 1) < 0.01, `cfi=${fcfi} first=${firstP} last=${lastP}`)
+  await setCfi(page, fcfi); await reopen(page, {})
+  ok('(整数IIPP) 章の先頭で閉じても再開は章先頭(章末へ飛ばない)', firstP !== lastP && (await pageNo(page)) === firstP, `page=${await pageNo(page)} first=${firstP} last=${lastP}`)
 
   ok('未捕捉の JS 例外が無い', errors.length === 0, errors.slice(0, 3).join(' | '))
 
