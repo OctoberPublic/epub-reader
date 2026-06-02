@@ -63,6 +63,30 @@ function findCoverPath(doc, opfPath) {
   return null
 }
 
+// OPF の dc:identifier(本の一意識別子)を返す。Bibi の A.ID と一致させるため、
+// package[unique-identifier] が指す dc:identifier を優先し、無ければ最初の dc:identifier。
+// これは Bibi が resume 用 localStorage キー(BibiBiscuits…#<A.ID>)に使う値で、本の特定に要る。
+export async function extractIdentifier(file) {
+  try {
+    const zip = await openZip(file)
+    const containerXml = await readEntryText(zip, 'META-INF/container.xml')
+    if (!containerXml) return ''
+    const cdoc = new DOMParser().parseFromString(containerXml, 'application/xml')
+    const rootfile = cdoc.getElementsByTagName('rootfile')[0]
+    const opfPath = rootfile && rootfile.getAttribute('full-path')
+    if (!opfPath) return ''
+    const opfText = await readEntryText(zip, opfPath)
+    const opf = new DOMParser().parseFromString(opfText, 'application/xml')
+    const pkg = opf.getElementsByTagName('package')[0]
+    const uid = pkg && pkg.getAttribute('unique-identifier')
+    const ids = [...opf.getElementsByTagName('*')].filter((e) => e.localName === 'identifier')
+    let val = ''
+    if (uid) { const el = ids.find((e) => e.getAttribute('id') === uid); if (el) val = (el.textContent || '').trim() }
+    if (!val && ids.length) val = (ids[0].textContent || '').trim()
+    return val
+  } catch { return '' }
+}
+
 // File/Blob からメタデータを抽出。失敗時はファイル名をタイトルにフォールバック。
 // 返り値: { title, author, cover, dir, language }
 export async function extractMetadata(file) {

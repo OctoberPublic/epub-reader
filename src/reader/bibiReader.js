@@ -17,6 +17,8 @@
 // 横書き本/マンガ=pre-paginated は pagination=x の影響を受けず、スライド演出も対象外。
 
 import { putBook, updateProgress } from '../storage/metadata.js'
+import { getBookFile } from '../storage/books.js'
+import { extractIdentifier } from '../util/epubMeta.js'
 
 const $ = (id) => document.getElementById(id)
 
@@ -52,6 +54,7 @@ export class BibiReader {
   #repinDebounce = null    // 再固定のデバウンス
   #leaving = false         // 「ライブラリへ戻る」ボタンで離脱中。離脱タップが誘発しうるページ送りを保存しないためのガード
   #lastRelayoutAt = 0      // 直近の再レイアウト(bibi:resized/laid-out)時刻。直後のページ変化は再固定が戻すので保存しない
+  #bookId = null           // この本の dc:identifier(=Bibi の A.ID)。localStorage の位置キー BibiBiscuits…#<A.ID> を本ごとに一意特定するため
 
   constructor({ onBack, onError } = {}) {
     this.#onBack = onBack
@@ -93,6 +96,9 @@ export class BibiReader {
     this.destroy()
     this.#loaded = false
     this.#failed = false
+    // 本の dc:identifier(=Bibi の A.ID)を取得しておく。localStorage の位置キーを本ごとに一意特定するため。
+    // 非同期だが最初の保存(ページ送り時)には十分間に合う。失敗時は #readLocator が安全側にフォールバック。
+    getBookFile(record.id).then((file) => extractIdentifier(file)).then((id) => { this.#bookId = id || null }).catch(() => {})
     const f = document.createElement('iframe')
     f.className = 'bibi-frame'
     f.setAttribute('allow', 'fullscreen')
@@ -223,10 +229,9 @@ export class BibiReader {
     try { doc = this.#iframe.contentDocument; win = this.#iframe.contentWindow } catch { return null }
     if (!doc || !win) return null
     try {
-      const item = this.#currentItemIndex(doc)
       const ls = win.localStorage
       if (!ls) return null
-      let chosen = null, sole = null, count = 0
+      let exact = null, sole = null, count = 0
       for (let i = 0; i < ls.length; i++) {
         const k = ls.key(i)
         if (!k || k.indexOf('BibiBiscuits') !== 0) continue
@@ -235,28 +240,13 @@ export class BibiReader {
         const iipp = v && v.Position && v.Position.IIPP
         if (typeof iipp !== 'number') continue
         count++; sole = iipp
-        if (item != null && Math.floor(iipp) === item) chosen = iipp
+        // この本の dc:identifier を接尾辞に持つキーだけが現在本の位置(複数本のキーが残るため一意特定が必須)。
+        if (this.#bookId && k.endsWith('#' + this.#bookId)) exact = iipp
       }
-      const iipp = (chosen != null) ? chosen : (count === 1 ? sole : null)
+      // 一意特定できた時のみ採用。できない(識別子未取得 等)時は、キーが1件だけなら採用、複数なら誤採用を避け null。
+      const iipp = (exact != null) ? exact : (count === 1 ? sole : null)
       return (typeof iipp === 'number') ? { iipp } : null
     } catch { /* レイアウト過渡などは無視 */ return null }
-  }
-
-  // 現在表示中の spine-item iframe の .Index(Bibi が付ける章番号)を、読み始めの角を数点サンプルして得る。
-  #currentItemIndex(doc) {
-    try {
-      const vw = this.#iframe.clientWidth, vh = this.#iframe.clientHeight
-      const rtl = !!(doc.documentElement && doc.documentElement.classList.contains('page-rtl'))
-      const xs = rtl ? [0.90, 0.78, 0.62, 0.50] : [0.10, 0.22, 0.38, 0.50] // 読み始めの横位置(端→内側)
-      const ys = [0.10, 0.20, 0.32, 0.45]
-      for (const fx of xs) {
-        for (const fy of ys) {
-          const el = doc.elementFromPoint(Math.floor(vw * fx), Math.floor(vh * fy))
-          if (el && el.tagName === 'IFRAME' && typeof el.Index === 'number') return el.Index
-        }
-      }
-    } catch { /* ignore */ }
-    return null
   }
 
   // 保存済みアンカーがあれば、レイアウト安定後に focus-on で正確な位置へ復元する予約をする。
@@ -567,6 +557,7 @@ export class BibiReader {
     this.#restored = false
     this.#leaving = false
     this.#lastRelayoutAt = 0
+    this.#bookId = null
   }
 
   // 進捗購読の後始末。iframe がまだ生きているうちに最終保存(デバウンス待ちの最新値を拾う)し、

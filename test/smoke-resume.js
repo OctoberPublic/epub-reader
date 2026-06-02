@@ -159,6 +159,17 @@ const main = async () => {
   })
   ok('(C) メニュー非表示でヘッダボタンは pointer-events:none / 表示中は auto', pe.hidden === 'none' && pe.shown === 'auto', JSON.stringify(pe))
 
+  // (A原因) 別の本の古い位置キーが localStorage に残っていても、現在の本(dc:identifier)のキーだけを読む。
+  // これが無いと、別本の「同じ章index・章末(高 frac)」のキーを誤採用し、第1章の頭で閉じたのに章末で再開していた。
+  await page.setViewportSize(S1); await wait(150)
+  await reopen(page, {})
+  await focusOn(page, { ItemIndex: 2 }); await wait(900)
+  await page.evaluate(() => document.querySelector('#bibi-surface iframe').contentWindow.localStorage
+    .setItem('BibiBiscuits:/vendor/bibi/presets/default.js#urn:uuid:OTHERBOOK', JSON.stringify({ Position: { IIPP: 2.95 } })))
+  await moveBy(page, 2)
+  const gcfi = await getCfi(page); let gl = null; try { gl = JSON.parse(gcfi) } catch {}
+  ok('(A原因) 別本の古いキーがあっても自分の本の位置を保存(identifier で一意特定)', gl && Math.floor(gl.iipp) === 2 && (gl.iipp % 1) < 0.6, `cfi=${gcfi}`)
+
   ok('未捕捉の JS 例外が無い', errors.length === 0, errors.slice(0, 3).join(' | '))
 
   await browser.close()
