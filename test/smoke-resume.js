@@ -99,8 +99,11 @@ const waitReaderReady = async (page) => {
   await wait(1800)
 }
 
+// ユーザーがそのページまで読んだ状況を作る。アプリは「直近のユーザー操作後のページ送り」だけ保存するため、
+// pointerdown(ユーザー操作)を模擬してから focus-on で移動する。
 const jumpTo = (page, dest) => page.evaluate((dest) => {
   const f = document.querySelector('#bibi-surface iframe'); const d = f.contentDocument
+  d.dispatchEvent(new Event('pointerdown', { bubbles: true }))
   d.dispatchEvent(new CustomEvent('bibi:commands:focus-on', { detail: { Destination: dest, Duration: 0 } }))
 }, dest)
 

@@ -7,7 +7,7 @@
 // (= 反映は次回起動。デプロイ後の目視確認は「×2 再起動」で行う)。
 // 書籍本体は IndexedDB にあり、仮想URL /bibi-book/<id>.epub で配信する(キャッシュ対象外)。
 
-const CACHE = 'epub-reader-v29'
+const CACHE = 'epub-reader-v30'
 const NET_TIMEOUT_MS = 4000 // ネットワーク取得のタイムアウト(固着防止)
 
 // 保存済み EPUB を仮想URL /bibi-book/<id>.epub で配信する(Bibi に .epub URL として渡すため)。

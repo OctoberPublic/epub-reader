@@ -23,6 +23,11 @@ const $ = (id) => document.getElementById(id)
 // 既定の単独ページ(表紙のみ単独)。固定レイアウト本でユーザーが「単独/組」を切り替えると更新される。
 const defaultSingles = (record) => (Array.isArray(record.singlePages) ? record.singlePages : [0])
 
+// 「ユーザーがページを動かした」と判定する入力イベント。生入力(キャッチャ/スライダ/キー)に加え、
+// Bibi 正規化のタップ/キー(入れ子 iframe でも外側 doc に届く)も含める。これ直後のページ送りだけ保存する。
+const USER_INPUT_EVENTS = ['pointerdown', 'pointermove', 'mousedown', 'touchstart', 'touchmove', 'keydown',
+  'bibi:tapped', 'bibi:doubletapped', 'bibi:pressed-key']
+
 // ロード監視のタイミング(白画面で固まらないための保険)。
 const AUTO_SHOW_MS = 4000  // この秒数までにロードが終わらなければ脱出ボタンを自動表示
 const LOAD_FAIL_MS = 12000 // この秒数までに本文が出なければ「開けませんでした」とみなす(ポーリングの約10秒より少し長く)
@@ -52,6 +57,9 @@ export class BibiReader {
   #onBibiRelayout = null   // bibi:resized/laid-out 用ハンドラ(再固定の解除に使う)
   #repinDebounce = null    // 再固定のデバウンス
   #restoreWindowTimer = null // 再固定ウィンドウ終了タイマー
+  #userMoved = false       // ユーザーが実際にページを送ったか。送るまで保存しない(復元位置の再保存=累積ズレ防止)
+  #userInteractedAt = 0    // 直近のユーザー操作(タップ/キー)時刻。これ直後のページ送りだけ「ユーザー操作」とみなす
+  #onUserInput = null      // ユーザー操作リスナ(解除に使う)
 
   constructor({ onBack, onError } = {}) {
     this.#onBack = onBack
@@ -165,8 +173,24 @@ export class BibiReader {
     try { doc = this.#iframe.contentDocument } catch { return }
     if (!doc || this.#progressDoc === doc) return // 二重登録防止(本ごと1回)
     this.#progressDoc = doc
+    // 直近のユーザー操作(タップ/ドラッグ/キー)時刻を記録する。これが「ユーザーのページ送り」判定の根拠。
+    // Bibi 内部の自動復元やリサイズ再アンカーは入力を伴わないので、これで弾ける。
+    const onInput = () => { this.#userInteractedAt = Date.now() }
+    this.#onUserInput = onInput
+    // 生のポインタ/キー入力(外側 doc のキャッチャ/スライダ等)に加え、Bibi 正規化のユーザーイベントも拾う。
+    // タップは入れ子の spine-item iframe に入って外側 doc に伝わらないことがあるが、bibi:tapped 等は
+    // Bibi が外側 doc に発火するので、入れ子に関係なく確実に「ユーザー操作」を検知できる。
+    for (const ev of USER_INPUT_EVENTS) {
+      doc.addEventListener(ev, onInput, true) // capture: Bibi が止めても先に拾う
+    }
     // 高頻度の bibi:is-scrolling は購読しない。デバウンスで書き込み頻度を抑える。
+    // 保存するのは「直近にユーザー操作があった」ページ送りのみ。Bibi 内部の自動復元や復元 focus-on・
+    // リサイズ再アンカーは入力を伴わないので弾ける。これにより「閉じ開きしただけ(復元位置)」を
+    // 再保存して少しずつ前進する累積ズレを防ぐ。
     const handler = () => {
+      if (Date.now() - this.#userInteractedAt > 1500) return // 直近のユーザー操作が無い → ユーザーのページ送りではない
+      this.#userMoved = true                                 // ユーザーが実際にページを動かした
+      this.#endRepin()                                       // 以後は再固定しない(ユーザー操作を尊重)
       if (this.#progressDebounce) clearTimeout(this.#progressDebounce)
       this.#progressDebounce = setTimeout(() => this.#readAndSaveProgress(), 800)
     }
@@ -180,6 +204,7 @@ export class BibiReader {
   #readAndSaveProgress() {
     if (!this.#iframe || !this.#record) return
     if (!this.#restored) return // 復元(focus-on)前は保存しない。Bibi の概算位置で正しいアンカーを上書きしないため。
+    if (!this.#userMoved) return // ユーザーがページを動かしていない(復元しただけ)なら保存しない=累積ズレ防止
     let doc
     try { doc = this.#iframe.contentDocument } catch { return }
     if (!doc) return
@@ -572,6 +597,8 @@ export class BibiReader {
     this.#lastSavedPct = null
     this.#lastSavedLoc = null
     this.#restored = false
+    this.#userMoved = false
+    this.#userInteractedAt = 0
   }
 
   // 進捗購読の後始末。iframe がまだ生きているうちに最終保存(デバウンス待ちの最新値を拾う)し、
@@ -585,7 +612,15 @@ export class BibiReader {
         this.#progressDoc.removeEventListener('bibi:flipped', this.#onBibiProgress)
       } catch { /* 破棄済み等は無視 */ }
     }
+    if (this.#progressDoc && this.#onUserInput) {
+      try {
+        for (const ev of USER_INPUT_EVENTS) {
+          this.#progressDoc.removeEventListener(ev, this.#onUserInput, true)
+        }
+      } catch { /* 破棄済み等は無視 */ }
+    }
     this.#progressDoc = null
     this.#onBibiProgress = null
+    this.#onUserInput = null
   }
 }
