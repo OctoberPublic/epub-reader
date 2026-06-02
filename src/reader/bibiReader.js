@@ -43,8 +43,7 @@ export class BibiReader {
   #progressDoc = null      // 進捗リスナを張った contentDocument(二重登録防止の基準)
   #onBibiProgress = null   // bibi:scrolled/bibi:flipped 用ハンドラ(解除に使う)
   #progressDebounce = null
-  #lastSavedPct = null     // 直近に保存した % (無変化スキップ用)
-  #lastSavedLoc = null     // 直近に保存した内容アンカー(JSON文字列、無変化スキップ用)
+  #lastSavedPage = null    // 直近に保存した表示ページ番号(無変化スキップ用)
   #restored = false        // 内容アンカーでの復元(focus-on)が済んだか。済むまで保存はガード
   #restoreTimer = null     // 復元を遅延実行するタイマー(レイアウト安定待ち)
   #restoreLoc = null       // 復元対象アンカー({item, sel})。再固定(re-pin)に使う
@@ -52,6 +51,7 @@ export class BibiReader {
   #onBibiRelayout = null   // bibi:resized/laid-out 用ハンドラ(再固定の解除に使う)
   #repinDebounce = null    // 再固定のデバウンス
   #leaving = false         // 「ライブラリへ戻る」ボタンで離脱中。離脱タップが誘発しうるページ送りを保存しないためのガード
+  #lastRelayoutAt = 0      // 直近の再レイアウト(bibi:resized/laid-out)時刻。直後のページ変化は再固定が戻すので保存しない
 
   constructor({ onBack, onError } = {}) {
     this.#onBack = onBack
@@ -186,43 +186,64 @@ export class BibiReader {
     if (!this.#iframe || !this.#record) return
     if (this.#leaving) return // 「ライブラリへ戻る」ボタンの離脱タップが左端=ページ送りも誘発しうる。その+1を保存しない。
     if (!this.#restored) return // 復元(focus-on)前は保存しない。Bibi の概算位置で正しいアンカーを上書きしないため。
+    // 再レイアウト直後のページ変化は「ユーザーのページ送り」ではなく、メニュー表示/ビューポート変化による
+    // 一時的なズレ。再固定(#setupRepin)が現在地へ戻すので、この窓の間は保存しない(基準を一時位置で上書きしない)。
+    if (Date.now() - this.#lastRelayoutAt < 1200) return
     let doc
     try { doc = this.#iframe.contentDocument } catch { return }
     if (!doc) return
-    // 内容アンカー(読み始めの角の段落の spine item index + CSS パス)。レイアウトに依らず同じ内容へ戻れる。
+    // 表示ページ番号(整数)が変わった時だけ保存する。メニュー表示や iOS のビューポート変化で位置が
+    // 揺れても、再固定(#setupRepin)が現在地へ戻すのでページ番号は元に戻り、保存されない=累積ズレ防止。
+    const cur = doc.querySelector('.bibi-nombre-current')
+    const pm = cur && (cur.textContent || '').match(/(\d+)/)
+    const page = pm ? parseInt(pm[1], 10) : null
+    if (page != null && page === this.#lastSavedPage) return // 無変化はスキップ
+    // 位置 = 章+章内割合(IIPP)。Bibi が localStorage に書く現在位置を本ごとに読む。要素ではなくページなので、
+    // 複数ページにまたがる長い段落でも先頭へ後退しない(focus-on {IIPP} は round(章内総ページ×割合) で復元)。
     const loc = this.#readLocator()
-    const locStr = loc ? JSON.stringify(loc) : null
-    // 基準アンカー(#restoreLoc=現在の確定位置)に留まっている間は保存しない。メニュー表示や iOS の
-    // ビューポート変化(ツールバー出入り)で少しずれても、再固定(#setupRepin)が基準へ戻すので、
-    // それらは「動いた」とみなされず保存されない=開くたびの累積ズレ防止。
-    if (this.#restoreLoc && (locStr == null || locStr === JSON.stringify(this.#restoreLoc))) return
-    // 読書率(% → fraction)。Bibi が算出し .bibi-nombre-percent に表示する値を読む。
+    // 読書率(% → fraction)。カード表示用。Bibi が .bibi-nombre-percent に出す値を読む。
     let pct = null
-    const el = doc.querySelector('.bibi-nombre-percent')
-    if (el) { const m = (el.textContent || '').match(/(\d+)/); if (m) pct = Math.max(0, Math.min(100, parseInt(m[1], 10))) }
-    if (pct === this.#lastSavedPct && locStr === this.#lastSavedLoc) return // 無変化はスキップ
-    this.#lastSavedPct = pct
-    this.#lastSavedLoc = locStr
-    // 実際に基準から動いた=ユーザーが読み進めた。基準を現在地へ更新する(以後の再固定はこの新基準を保ち、
-    // メニュー/再レイアウトのズレはここへ戻す)。再固定は本を閉じるまで常設のまま。
-    if (locStr != null) this.#restoreLoc = loc
+    const pe = doc.querySelector('.bibi-nombre-percent')
+    if (pe) { const m = (pe.textContent || '').match(/(\d+)/); if (m) pct = Math.max(0, Math.min(100, parseInt(m[1], 10))) }
     const payload = {}
     if (pct != null) payload.fraction = pct / 100
-    if (locStr != null) payload.cfi = locStr
+    if (loc) { payload.cfi = JSON.stringify(loc); this.#restoreLoc = loc } // 現在地を基準に更新(再固定はここへ戻す)
     if (payload.fraction == null && payload.cfi == null) return
+    if (page != null) this.#lastSavedPage = page
     // await しない(読書を妨げない)。updateProgress が lastOpenedAt も更新する(意図どおり)。
     updateProgress(this.#record.id, payload).catch((e) => console.warn('進捗の保存に失敗:', e))
   }
 
-  // 現在ページ「先頭」の段落を内容アンカー({spine item index, CSS パス})として読む。
-  // 復元(focus-on)は対象段落を読み始めの端へそろえるので、保存も“中央”ではなく“先頭”にすること。
-  // そうしないと毎回半ページぶん前へずれ、再保存で累積する(=開くたびにページが進む現象)。
-  // 読み始めの角(縦書き/右綴じ=右上、横書き/左綴じ=左上)付近を数点サンプルし、最初に当たった段落を採る。
+  // 現在位置を {iipp} として読む。iipp = 章index + 章内割合。Bibi が resume 用に localStorage
+  // (BibiBiscuits…#<本ID>, 値 {Position:{IIPP}})へ書く現在位置を、親から読む。複数本のキーが残るため、
+  // 「現在表示中の spine item の .Index」と floor(IIPP) が一致するキーを選ぶ(1件なら無条件採用)。
   #readLocator() {
     if (!this.#iframe) return null
-    let doc
-    try { doc = this.#iframe.contentDocument } catch { return null }
-    if (!doc) return null
+    let doc, win
+    try { doc = this.#iframe.contentDocument; win = this.#iframe.contentWindow } catch { return null }
+    if (!doc || !win) return null
+    try {
+      const item = this.#currentItemIndex(doc)
+      const ls = win.localStorage
+      if (!ls) return null
+      let chosen = null, sole = null, count = 0
+      for (let i = 0; i < ls.length; i++) {
+        const k = ls.key(i)
+        if (!k || k.indexOf('BibiBiscuits') !== 0) continue
+        let v
+        try { v = JSON.parse(ls.getItem(k)) } catch { continue }
+        const iipp = v && v.Position && v.Position.IIPP
+        if (typeof iipp !== 'number') continue
+        count++; sole = iipp
+        if (item != null && Math.floor(iipp) === item) chosen = iipp
+      }
+      const iipp = (chosen != null) ? chosen : (count === 1 ? sole : null)
+      return (typeof iipp === 'number') ? { iipp } : null
+    } catch { /* レイアウト過渡などは無視 */ return null }
+  }
+
+  // 現在表示中の spine-item iframe の .Index(Bibi が付ける章番号)を、読み始めの角を数点サンプルして得る。
+  #currentItemIndex(doc) {
     try {
       const vw = this.#iframe.clientWidth, vh = this.#iframe.clientHeight
       const rtl = !!(doc.documentElement && doc.documentElement.classList.contains('page-rtl'))
@@ -230,48 +251,12 @@ export class BibiReader {
       const ys = [0.10, 0.20, 0.32, 0.45]
       for (const fx of xs) {
         for (const fy of ys) {
-          const res = this.#blockAtPoint(doc, Math.floor(vw * fx), Math.floor(vh * fy))
-          if (res) return res
+          const el = doc.elementFromPoint(Math.floor(vw * fx), Math.floor(vh * fy))
+          if (el && el.tagName === 'IFRAME' && typeof el.Index === 'number') return el.Index
         }
       }
-    } catch { /* レイアウト過渡などは無視 */ }
+    } catch { /* ignore */ }
     return null
-  }
-
-  // 外側座標 (cx,cy) の点から spine-item iframe(本文)へ降り、最寄りのブロック要素を {item, sel} で返す。
-  #blockAtPoint(doc, cx, cy) {
-    let el = doc.elementFromPoint(cx, cy)
-    let item = null
-    let guard = 0
-    while (el && el.tagName === 'IFRAME' && guard++ < 4) {
-      let innerDoc
-      try { innerDoc = el.contentDocument } catch { return null }
-      if (!innerDoc) return null
-      if (typeof el.Index === 'number') item = el.Index // Bibi が spine item iframe に付ける番号
-      const r = el.getBoundingClientRect()
-      const inner = innerDoc.elementFromPoint(Math.floor(cx - r.left), Math.floor(cy - r.top))
-      if (inner && inner.tagName === 'IFRAME') { el = inner; continue }
-      if (item == null) return null
-      let node = inner
-      while (node && node.nodeType === 1 && !/^(P|H1|H2|H3|H4|H5|H6|LI|BLOCKQUOTE|FIGURE|IMG|DIV|SECTION)$/.test(node.tagName)) node = node.parentElement
-      const sel = node ? this.#cssPath(node) : null
-      return sel ? { item, sel } : null
-    }
-    return null
-  }
-
-  // 要素までの一意な CSS パス(html を除き body から nth-child で辿る)。querySelector で再特定できる形。
-  #cssPath(el) {
-    const parts = []
-    let node = el
-    while (node && node.nodeType === 1 && node.tagName !== 'HTML') {
-      const parent = node.parentElement
-      if (!parent) break
-      const idx = Array.prototype.indexOf.call(parent.children, node) + 1
-      parts.unshift(node.tagName.toLowerCase() + ':nth-child(' + idx + ')')
-      node = parent
-    }
-    return parts.length ? parts.join('>') : null
   }
 
   // 保存済みアンカーがあれば、レイアウト安定後に focus-on で正確な位置へ復元する予約をする。
@@ -284,7 +269,7 @@ export class BibiReader {
     const raw = this.#record && this.#record.cfi
     let loc = null
     if (raw) { try { loc = JSON.parse(raw) } catch { loc = null } }
-    if (!loc || typeof loc.item !== 'number') { this.#restored = true; return }
+    if (!loc || typeof loc.iipp !== 'number') { this.#restored = true; return } // 旧形式({item,sel})等は無視→Bibi 既定復元
     this.#restoreLoc = loc
     // Bibi 自身の概算復元 + アプリの resize-follow(~250ms)が落ち着いた頃に正確化する
     // (1200ms 未満なので #setupPageSlide のアニメ無効ゲート内=瞬時移動になる)。
@@ -293,38 +278,22 @@ export class BibiReader {
 
   // 指定アンカーのページへ focus-on(対象要素が在る時だけ)。Bibi の focus-on コマンドへ
   // Destination を渡す(CFI ナビと同じ機構=レイアウト非依存)。要素が見つからなければ動かさない
-  // (章頭へ飛ばさず Bibi の概算復元を尊重)。戻り値: 移動できた(=要素が在った)か。
+  // 保存した {iipp}(章+章内割合)のページへ Bibi を移動させる。focus-on は IIPP を
+  // round(章内総ページ×割合) のページに解決する(=要素ではなくページ。長い段落でも後退しない)。
   #focusOnAnchor(loc) {
     let doc = null
     try { doc = this.#iframe && this.#iframe.contentDocument } catch { doc = null }
-    if (!doc) return false
-    let found = !loc.sel
-    if (loc.sel) {
-      try {
-        for (const ifr of doc.querySelectorAll('iframe')) {
-          if (typeof ifr.Index !== 'number' || ifr.Index !== loc.item) continue
-          let idoc = null
-          try { idoc = ifr.contentDocument } catch { idoc = null }
-          found = !!(idoc && idoc.querySelector(loc.sel))
-          break
-        }
-      } catch { /* ignore */ }
-      if (!found) return false
-    }
-    const dest = { ItemIndex: loc.item }
-    if (loc.sel) dest.ElementSelector = loc.sel
+    if (!doc || !loc || typeof loc.iipp !== 'number') return false
     try {
-      doc.dispatchEvent(new CustomEvent('bibi:commands:focus-on', { detail: { Destination: dest, Duration: 0 } }))
+      doc.dispatchEvent(new CustomEvent('bibi:commands:focus-on', { detail: { Destination: { IIPP: loc.iipp }, Duration: 0 } }))
     } catch { /* 失敗時は Bibi の概算復元のまま */ }
     return true
   }
 
-  // 初回復元。レイアウト未確定で要素がまだ無ければ少し待って数回まで再試行。成功/打ち切りで保存解禁。
-  #restoreLocator(loc, tries = 0) {
+  // 初回復元。レイアウト安定後に focus-on {IIPP} を一度実行し、以後の保存を解禁する(再固定が以降を担う)。
+  #restoreLocator(loc) {
     this.#restoreTimer = null
-    if (!this.#iframe) { this.#restored = true; return }
-    const done = this.#focusOnAnchor(loc)
-    if (!done && tries < 5) { this.#restoreTimer = setTimeout(() => this.#restoreLocator(loc, tries + 1), 400); return }
+    if (this.#iframe) this.#focusOnAnchor(loc)
     this.#restored = true // 以後は保存解禁(復元位置からの続きとして保存)
   }
 
@@ -337,6 +306,7 @@ export class BibiReader {
     if (!doc || this.#repinDoc === doc) return
     this.#repinDoc = doc
     const onRelayout = () => {
+      this.#lastRelayoutAt = Date.now() // 直後のページ変化は保存対象外にする(#readAndSaveProgress)
       if (!this.#restoreLoc) return
       if (this.#repinDebounce) clearTimeout(this.#repinDebounce)
       this.#repinDebounce = setTimeout(() => { if (this.#restoreLoc) this.#focusOnAnchor(this.#restoreLoc) }, 150)
@@ -423,7 +393,16 @@ export class BibiReader {
         // 白背景に濃いグレー文字。長いタイトルは省略記号で切り、左右ボタン群とは margin で離す。
         '#bibi-app-title{position:absolute;top:0;left:0;right:0;height:39px;line-height:39px;margin:0 64px;text-align:center;font-size:13px;color:#707070;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;opacity:0;-webkit-transition:opacity .75s linear;transition:opacity .75s linear}' +
         // メニュー開閉と同じクラスに opacity を紐付け、同じタイミング・同じフェードで出入りさせる。
-        'html.menu-opened #bibi-app-title,html.panel-opened #bibi-app-title,html.subpanel-opened #bibi-app-title,div#bibi-menu.hover #bibi-app-title{opacity:1}'
+        'html.menu-opened #bibi-app-title,html.panel-opened #bibi-app-title,html.subpanel-opened #bibi-app-title,div#bibi-menu.hover #bibi-app-title{opacity:1}' +
+        // [C修正] メニュー非表示時はヘッダのボタン(ライブラリ/目次/設定 等)を無効化する。Bibi 既定 CSS は
+        // ボタン ul(.bibi-buttongroup.sticky)を opacity:0 にするだけで pointer-events を切らないため、見えないのに
+        // タップが効いてしまう。opacity の出し分けと同じ表示クラスの時だけ pointer-events:auto にする
+        // (.sticky は常時付くクラスなので除外条件にしない)。
+        'div#bibi-menu-l ul,div#bibi-menu-r ul{pointer-events:none}' +
+        'div#bibi-menu.hover div#bibi-menu-l ul,div#bibi-menu.hover div#bibi-menu-r ul,' +
+        'html.menu-opened div#bibi-menu-l ul,html.menu-opened div#bibi-menu-r ul,' +
+        'html.panel-opened div#bibi-menu-l ul,html.panel-opened div#bibi-menu-r ul,' +
+        'html.subpanel-opened div#bibi-menu-l ul,html.subpanel-opened div#bibi-menu-r ul{pointer-events:auto}'
       doc.head.appendChild(st)
     }
 
@@ -584,10 +563,10 @@ export class BibiReader {
       this.#iframe.remove()
       this.#iframe = null
     }
-    this.#lastSavedPct = null
-    this.#lastSavedLoc = null
+    this.#lastSavedPage = null
     this.#restored = false
     this.#leaving = false
+    this.#lastRelayoutAt = 0
   }
 
   // 進捗購読の後始末。iframe がまだ生きているうちに最終保存(デバウンス待ちの最新値を拾う)し、
