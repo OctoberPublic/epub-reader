@@ -46,9 +46,9 @@ export class BibiReader {
   #onBibiProgress = null   // bibi:scrolled/bibi:flipped 用ハンドラ(解除に使う)
   #progressDebounce = null
   #lastSavedPage = null    // 直近に保存した表示ページ番号(無変化スキップ用)
-  #restored = false        // 内容アンカーでの復元(focus-on)が済んだか。済むまで保存はガード
+  #restored = false        // 位置(IIPP)の復元(focus-on)が済んだか。済むまで保存はガード
   #restoreTimer = null     // 復元を遅延実行するタイマー(レイアウト安定待ち)
-  #restoreLoc = null       // 復元対象アンカー({item, sel})。再固定(re-pin)に使う
+  #restoreLoc = null       // 復元対象の位置({iipp}=章index+章内割合)。再固定(re-pin)に使う
   #repinDoc = null         // re-pin リスナを張った contentDocument
   #onBibiRelayout = null   // bibi:resized/laid-out 用ハンドラ(再固定の解除に使う)
   #repinDebounce = null    // 再固定のデバウンス
@@ -159,7 +159,7 @@ export class BibiReader {
     const esc = $('reader-escape')
     if (esc) esc.hidden = true
     this.#setupProgress() // 本文が出たので読書進捗の購読を開始
-    this.#scheduleRestore() // 保存済みの内容アンカーがあれば、レイアウト安定後に正確な位置へ復元
+    this.#scheduleRestore() // 保存済みの位置(IIPP)があれば、レイアウト安定後に正確な位置へ復元
   }
 
   // 読書進捗の取得を開始する。Bibi の読書率は iframe 内 .bibi-nombre-percent に整数%で表示され、
@@ -184,10 +184,10 @@ export class BibiReader {
     doc.addEventListener('bibi:flipped', handler)
   }
 
-  // 現在の読書率(%)と内容アンカー(章+段落)を読み取り、変化していれば保存する。
-  // fraction はライブラリのカード表示用。cfi には内容アンカー(JSON)を入れ、再開時に focus-on で正確に復元する。
-  // 累積ズレ防止: 復元アンカーへ留まっている間(=まだ読み進めていない/再固定で戻された)は保存しない。
-  // 位置が復元アンカーから動いて初めて保存する。これは入力検知ではなく実際の内容位置で判定する。
+  // 現在の読書率(%)と位置(IIPP=章+章内割合)を読み取り、変化していれば保存する。
+  // fraction はライブラリのカード表示用。cfi には IIPP(JSON)を入れ、再開時に focus-on で正確に復元する。
+  // 累積ズレ防止: 復元位置へ留まっている間(=まだ読み進めていない/再固定で戻された)は保存しない。
+  // 位置が復元位置から動いて初めて保存する。これは入力検知ではなく実際の表示位置で判定する。
   #readAndSaveProgress() {
     if (!this.#iframe || !this.#record) return
     if (this.#leaving) return // 「ライブラリへ戻る」ボタンの離脱タップが左端=ページ送りも誘発しうる。その+1を保存しない。
@@ -249,8 +249,8 @@ export class BibiReader {
     } catch { /* レイアウト過渡などは無視 */ return null }
   }
 
-  // 保存済みアンカーがあれば、レイアウト安定後に focus-on で正確な位置へ復元する予約をする。
-  // アンカーが無ければ復元不要として即「保存解禁」する(初読・旧データ向け。Bibi 既定の概算復元に任せる)。
+  // 保存済みの位置(IIPP)があれば、レイアウト安定後に focus-on で正確な位置へ復元する予約をする。
+  // 位置が無ければ復元不要として即「保存解禁」する(初読・旧データ向け。Bibi 既定の概算復元に任せる)。
   #scheduleRestore() {
     // 再固定リスナを常設する(本を閉じるまで)。restoreLoc が無い間は何もしない。
     // restoreLoc は復元時(下)と、読み進めて保存するたび(#readAndSaveProgress)に「現在地」へ更新される。

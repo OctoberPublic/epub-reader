@@ -1,5 +1,7 @@
 // 書籍メタデータ + 読書位置を IndexedDB の 'books' ストアに保存する。
 // レコード: { id, title, author, cover(dataURL), dir, sourceName, size, addedAt, lastOpenedAt, cfi, fraction, forceFixedLayout?, favorite?, wantToRead? }
+// cfi: 読書位置。実体は IIPP(章index+章内割合) の JSON({iipp:数値})。EPUB CFI ではなく Bibi 独自の位置表現
+//      (フィールド名は既存データ互換のため cfi のまま)。fraction: 進捗率(0..1、カード表示用)。
 // 表紙は data URL 文字列(cover)で保持する(Blob 再保存による iOS の破損回避。詳細は util/blob.js)。
 
 import { store, reqToPromise, mutate } from './db.js'
@@ -48,7 +50,7 @@ export async function migrateCovers() {
   }
 }
 
-// 読書位置(CFI)と進捗(fraction)、最終閲覧時刻を更新する。
+// 読書位置(cfi=IIPP の JSON)と進捗(fraction)、最終閲覧時刻を更新する。
 export async function updateProgress(id, { cfi, fraction }) {
   return mutate('books', async (s) => {
     const record = await reqToPromise(s.get(id))
@@ -82,7 +84,7 @@ export async function setWantToRead(id, wantToRead) {
 }
 
 // 最終閲覧時刻だけを更新する(本を開いた時点で呼ぶ)。「最近開いた順」ソートの基準。
-// cfi/fraction(読書位置・進捗)はここでは触らない。
+// cfi(=IIPP JSON)/fraction(読書位置・進捗)はここでは触らない。
 export async function markOpened(id) {
   return mutate('books', async (s) => {
     const record = await reqToPromise(s.get(id))
