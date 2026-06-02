@@ -188,6 +188,18 @@ const main = async () => {
   const c = await anchorVisible(page, savedLoc)
   ok('開く最中に揺れても同じ段落が画面に出る(再固定 re-pin)', c.visible && c.cp === cp0, `cp=${c.cp}`)
 
+  // (D) 閉じ開きを繰り返してもページが前進クリープしない(アンカーが固定点であること)。
+  //     旧実装は「画面中央」を保存し focus-on が「先頭」へそろえるため、毎回半ページ前へ累積した。
+  await page.setViewportSize(S1); await wait(200)
+  await setCfi(page, cfiA)
+  let crept = null
+  for (let i = 0; i < 4; i++) {
+    await reopen(page, { jitter: true, base: S1 }) // cfi はリセットしない=自然保存させて累積を見る
+    const cur = await getSavedCfi(page)
+    if (cur !== cfiA) { crept = cur; break }
+  }
+  ok('閉じ開きを繰り返してもアンカーが動かない(前進クリープしない)', crept === null, crept ? `drifted→${crept}` : `cfi安定=${cfiA}`)
+
   ok('未捕捉の JS 例外が無い', errors.length === 0, errors.slice(0, 3).join(' | '))
 
   await browser.close()

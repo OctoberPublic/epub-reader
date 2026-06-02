@@ -201,34 +201,49 @@ export class BibiReader {
     updateProgress(this.#record.id, payload).catch((e) => console.warn('進捗の保存に失敗:', e))
   }
 
-  // 画面中央に見えている段落の「spine item index + CSS パス」を内容アンカーとして読む。
-  // ネストした spine-item iframe(本文)へ降りて、中央点の最寄りブロック要素を特定する。失敗時は null。
+  // 現在ページ「先頭」の段落を内容アンカー({spine item index, CSS パス})として読む。
+  // 復元(focus-on)は対象段落を読み始めの端へそろえるので、保存も“中央”ではなく“先頭”にすること。
+  // そうしないと毎回半ページぶん前へずれ、再保存で累積する(=開くたびにページが進む現象)。
+  // 読み始めの角(縦書き/右綴じ=右上、横書き/左綴じ=左上)付近を数点サンプルし、最初に当たった段落を採る。
   #readLocator() {
     if (!this.#iframe) return null
     let doc
     try { doc = this.#iframe.contentDocument } catch { return null }
     if (!doc) return null
     try {
-      const cx = Math.floor(this.#iframe.clientWidth / 2)
-      const cy = Math.floor(this.#iframe.clientHeight / 2)
-      let el = doc.elementFromPoint(cx, cy)
-      let item = null
-      let guard = 0
-      while (el && el.tagName === 'IFRAME' && guard++ < 4) {
-        let innerDoc
-        try { innerDoc = el.contentDocument } catch { return null }
-        if (!innerDoc) return null
-        if (typeof el.Index === 'number') item = el.Index // Bibi が spine item iframe に付ける番号
-        const r = el.getBoundingClientRect()
-        const inner = innerDoc.elementFromPoint(Math.floor(cx - r.left), Math.floor(cy - r.top))
-        if (inner && inner.tagName === 'IFRAME') { el = inner; continue }
-        if (item == null) return null
-        let node = inner
-        while (node && node.nodeType === 1 && !/^(P|H1|H2|H3|H4|H5|H6|LI|BLOCKQUOTE|FIGURE|IMG|DIV|SECTION)$/.test(node.tagName)) node = node.parentElement
-        const sel = node ? this.#cssPath(node) : null
-        return { item, sel }
+      const vw = this.#iframe.clientWidth, vh = this.#iframe.clientHeight
+      const rtl = !!(doc.documentElement && doc.documentElement.classList.contains('page-rtl'))
+      const xs = rtl ? [0.90, 0.78, 0.62, 0.50] : [0.10, 0.22, 0.38, 0.50] // 読み始めの横位置(端→内側)
+      const ys = [0.10, 0.20, 0.32, 0.45]
+      for (const fx of xs) {
+        for (const fy of ys) {
+          const res = this.#blockAtPoint(doc, Math.floor(vw * fx), Math.floor(vh * fy))
+          if (res) return res
+        }
       }
     } catch { /* レイアウト過渡などは無視 */ }
+    return null
+  }
+
+  // 外側座標 (cx,cy) の点から spine-item iframe(本文)へ降り、最寄りのブロック要素を {item, sel} で返す。
+  #blockAtPoint(doc, cx, cy) {
+    let el = doc.elementFromPoint(cx, cy)
+    let item = null
+    let guard = 0
+    while (el && el.tagName === 'IFRAME' && guard++ < 4) {
+      let innerDoc
+      try { innerDoc = el.contentDocument } catch { return null }
+      if (!innerDoc) return null
+      if (typeof el.Index === 'number') item = el.Index // Bibi が spine item iframe に付ける番号
+      const r = el.getBoundingClientRect()
+      const inner = innerDoc.elementFromPoint(Math.floor(cx - r.left), Math.floor(cy - r.top))
+      if (inner && inner.tagName === 'IFRAME') { el = inner; continue }
+      if (item == null) return null
+      let node = inner
+      while (node && node.nodeType === 1 && !/^(P|H1|H2|H3|H4|H5|H6|LI|BLOCKQUOTE|FIGURE|IMG|DIV|SECTION)$/.test(node.tagName)) node = node.parentElement
+      const sel = node ? this.#cssPath(node) : null
+      return sel ? { item, sel } : null
+    }
     return null
   }
 
