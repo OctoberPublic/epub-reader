@@ -53,6 +53,7 @@ export class BibiReader {
   #repinDebounce = null    // 再固定のデバウンス
   #restoreWindowTimer = null // 再固定ウィンドウ終了タイマー
   #onUserTurn = null       // bibi:is-going-to:move-by 用ハンドラ(ユーザーのページ送りで再固定を止める)
+  #userTurned = false      // ユーザーが実際にページを送ったか。送るまで保存しない(復元/メニュー表示/再レイアウトの揺れの再保存=累積ズレ防止)
 
   constructor({ onBack, onError } = {}) {
     this.#onBack = onBack
@@ -177,9 +178,10 @@ export class BibiReader {
     this.#onBibiProgress = handler
     doc.addEventListener('bibi:scrolled', handler) // ページ送り/スクロール両対応のため両方購読
     doc.addEventListener('bibi:flipped', handler)
-    // 相対ページ送りの直前に外側 doc へ発火(タップ/スワイプ/キー全てに共通、復元/再固定の focus-on では
-    // 発火しないことを確認済み)。ユーザーが送った瞬間に再固定をやめ、復元アンカーへ引き戻さない(尊重)。
-    const onTurn = () => this.#endRepin()
+    // 相対ページ送りの直前に外側 doc へ発火(タップ/スワイプ/キー全てに共通、復元/再固定の focus-on や
+    // メニュー表示/再レイアウトでは発火しないことを確認済み)。これが「ユーザーが実際に送った」唯一の確かな
+    // 合図。発火したら (1) 再固定をやめ復元アンカーへ引き戻さない (2) 以後の保存を解禁する。
+    const onTurn = () => { this.#userTurned = true; this.#endRepin() }
     this.#onUserTurn = onTurn
     doc.addEventListener('bibi:is-going-to:move-by', onTurn)
   }
@@ -191,18 +193,15 @@ export class BibiReader {
   #readAndSaveProgress() {
     if (!this.#iframe || !this.#record) return
     if (!this.#restored) return // 復元(focus-on)前は保存しない。Bibi の概算位置で正しいアンカーを上書きしないため。
+    // ユーザーが実際にページを送る(bibi:is-going-to:move-by)まで保存しない。これにより、復元しただけ・
+    // メニュー表示や再レイアウトで位置が少しずれただけ、を再保存して開くたびに前進する累積ズレを防ぐ。
+    if (!this.#userTurned) return
     let doc
     try { doc = this.#iframe.contentDocument } catch { return }
     if (!doc) return
     // 内容アンカー(読み始めの角の段落の spine item index + CSS パス)。レイアウトに依らず同じ内容へ戻れる。
     const loc = this.#readLocator()
     const locStr = loc ? JSON.stringify(loc) : null
-    // 復元アンカーがある間は「動いたか」で保存可否を決める。まだ復元位置のまま(or 位置不明)なら保存しない
-    // =開くたびの累積ズレ防止。動いたら確定し、以後は再固定をやめてフリー保存に移る。
-    if (this.#restoreLoc) {
-      if (locStr == null || locStr === JSON.stringify(this.#restoreLoc)) return
-      this.#endRepin() // 復元位置から動いた=読み進めた。再固定を解除(restoreLoc も null になる)
-    }
     // 読書率(% → fraction)。Bibi が算出し .bibi-nombre-percent に表示する値を読む。
     let pct = null
     const el = doc.querySelector('.bibi-nombre-percent')
@@ -589,6 +588,7 @@ export class BibiReader {
     this.#lastSavedPct = null
     this.#lastSavedLoc = null
     this.#restored = false
+    this.#userTurned = false
   }
 
   // 進捗購読の後始末。iframe がまだ生きているうちに最終保存(デバウンス待ちの最新値を拾う)し、

@@ -99,13 +99,24 @@ const waitReaderReady = async (page) => {
   await wait(1800)
 }
 
-// ユーザーがそのページまで読んだ状況を作る。アプリは「直近のユーザー操作後のページ送り」だけ保存するため、
-// pointerdown(ユーザー操作)を模擬してから focus-on で移動する。
-const jumpTo = (page, dest) => page.evaluate((dest) => {
-  const f = document.querySelector('#bibi-surface iframe'); const d = f.contentDocument
-  d.dispatchEvent(new Event('pointerdown', { bubbles: true }))
-  d.dispatchEvent(new CustomEvent('bibi:commands:focus-on', { detail: { Destination: dest, Duration: 0 } }))
-}, dest)
+// ユーザーがそのページまで読んだ状況を作る。アプリは「実ページ送り(bibi:is-going-to:move-by)」が
+// 起きて初めて保存するので、目的の章へ focus-on で寄せてから move-by を数回(=ユーザーのページ送り)。
+const readTo = async (page, dest, turns = 3) => {
+  await page.evaluate((dest) => {
+    document.querySelector('#bibi-surface iframe').contentDocument
+      .dispatchEvent(new CustomEvent('bibi:commands:focus-on', { detail: { Destination: dest, Duration: 0 } }))
+  }, dest)
+  await wait(800)
+  for (let i = 0; i < turns; i++) {
+    await page.evaluate(() => document.querySelector('#bibi-surface iframe').contentDocument
+      .dispatchEvent(new CustomEvent('bibi:commands:move-by', { detail: { Distance: 1 } })))
+    await wait(380)
+  }
+  await wait(1200)
+}
+// メニュー表示/再レイアウト相当の「ユーザー操作を伴わない位置移動」(focus-on のみ。move-by は出ない)。
+const nonUserShift = (page, item) => page.evaluate((it) => document.querySelector('#bibi-surface iframe').contentDocument
+  .dispatchEvent(new CustomEvent('bibi:commands:focus-on', { detail: { Destination: { ItemIndex: it }, Duration: 0 } })), item)
 
 // 保存アンカー(item + sel)の要素が、今リーダーの画面内に見えているか
 const anchorVisible = (page, loc) => page.evaluate((loc) => {
@@ -162,14 +173,13 @@ const main = async () => {
   await page.click('.book-card')
   await waitReaderReady(page)
 
-  // 第4章(item=3)の段落20付近へ移動(=ユーザーがそこまで読んだ状況)→ 保存(debounce)待ち
-  await jumpTo(page, { ItemIndex: 3, ElementSelector: 'p[data-cp="4-20"]' })
-  await wait(1500)
+  // 第4章(item=3)あたりへ寄せ、ユーザーのページ送り(move-by)で読み進める → 保存される
+  await readTo(page, { ItemIndex: 3, ElementSelector: 'p[data-cp="4-2"]' }, 3)
   const cfiA = await getSavedCfi(page)
   let savedLoc = null; try { savedLoc = cfiA ? JSON.parse(cfiA) : null } catch {}
-  ok('内容アンカー(章+段落)が cfi に保存される', savedLoc && typeof savedLoc.item === 'number' && !!savedLoc.sel, `cfi=${cfiA}`)
+  ok('ユーザーのページ送りで内容アンカー(章+段落)が cfi に保存される', savedLoc && typeof savedLoc.item === 'number' && !!savedLoc.sel, `cfi=${cfiA}`)
   const before = await anchorVisible(page, savedLoc)
-  ok('移動直後、その段落が画面に出ている', before.visible, `cp=${before.cp}`)
+  ok('読み進めた段落が画面に出ている', before.visible, `cp=${before.cp}`)
   const cp0 = before.cp
 
   // (A) 同一サイズで開き直す
@@ -202,6 +212,19 @@ const main = async () => {
     if (cur !== cfiA) { crept = cur; break }
   }
   ok('閉じ開きを繰り返してもアンカーが動かない(前進クリープしない)', crept === null, crept ? `drifted→${crept}` : `cfi安定=${cfiA}`)
+
+  // (E) ユーザー操作を伴わない位置移動(メニュー表示/再レイアウト相当)は保存されない。
+  //     再固定ウィンドウ(4s)が終わった後に大きくずらしても、閉じ開きで元の位置に戻ること。
+  await page.setViewportSize(S1); await wait(200)
+  await setCfi(page, cfiA)
+  await reopen(page, {})
+  await wait(4300) // re-pin ウィンドウ(4s)経過後(旧実装はここで restoreLoc が消え穴になった)
+  await nonUserShift(page, 5) // 別章へ大きく移動(move-by 無し=ユーザー操作ではない)
+  await wait(1500)
+  await reopen(page, {})
+  const e = await anchorVisible(page, savedLoc)
+  const cfiE = await getSavedCfi(page)
+  ok('ユーザー操作を伴わないズレは保存されない(メニュー累積クリープ防止)', cfiE === cfiA && e.visible && e.cp === cp0, `cp=${e.cp} cfi=${cfiE === cfiA ? '不変' : 'ずれた:' + cfiE}`)
 
   ok('未捕捉の JS 例外が無い', errors.length === 0, errors.slice(0, 3).join(' | '))
 
