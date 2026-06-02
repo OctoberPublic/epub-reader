@@ -114,10 +114,6 @@ const readTo = async (page, dest, turns = 3) => {
   }
   await wait(1200)
 }
-// メニュー表示/再レイアウト相当の「ユーザー操作を伴わない位置移動」(focus-on のみ。move-by は出ない)。
-const nonUserShift = (page, item) => page.evaluate((it) => document.querySelector('#bibi-surface iframe').contentDocument
-  .dispatchEvent(new CustomEvent('bibi:commands:focus-on', { detail: { Destination: { ItemIndex: it }, Duration: 0 } })), item)
-
 // 保存アンカー(item + sel)の要素が、今リーダーの画面内に見えているか
 const anchorVisible = (page, loc) => page.evaluate((loc) => {
   const f = document.querySelector('#bibi-surface iframe'); const d = f && f.contentDocument
@@ -213,18 +209,19 @@ const main = async () => {
   }
   ok('閉じ開きを繰り返してもアンカーが動かない(前進クリープしない)', crept === null, crept ? `drifted→${crept}` : `cfi安定=${cfiA}`)
 
-  // (E) ユーザー操作を伴わない位置移動(メニュー表示/再レイアウト相当)は保存されない。
-  //     再固定ウィンドウ(4s)が終わった後に大きくずらしても、閉じ開きで元の位置に戻ること。
+  // (E) 開いて十分に落ち着いた後(=読書中)にビューポートが変化しても(iOS ツールバー出入り/メニュー表示相当)
+  //     位置は保存し直されない=メニュー表示で戻すたびに前進する累積ズレの防止。
+  //     旧実装は再固定が4秒で切れ、その後の再レイアウト由来のズレを保存してしまっていた(=今回の退行原因)。
   await page.setViewportSize(S1); await wait(200)
   await setCfi(page, cfiA)
   await reopen(page, {})
-  await wait(4300) // re-pin ウィンドウ(4s)経過後(旧実装はここで restoreLoc が消え穴になった)
-  await nonUserShift(page, 5) // 別章へ大きく移動(move-by 無し=ユーザー操作ではない)
-  await wait(1500)
+  await wait(4500) // 旧実装なら再固定が切れている頃(常設化したので切れない)
+  await page.setViewportSize({ width: 430, height: 812 }); await wait(900) // ツールバー出現相当
+  await page.setViewportSize(S1); await wait(900)                          // 戻る
   await reopen(page, {})
   const e = await anchorVisible(page, savedLoc)
   const cfiE = await getSavedCfi(page)
-  ok('ユーザー操作を伴わないズレは保存されない(メニュー累積クリープ防止)', cfiE === cfiA && e.visible && e.cp === cp0, `cp=${e.cp} cfi=${cfiE === cfiA ? '不変' : 'ずれた:' + cfiE}`)
+  ok('落ち着いた後の再レイアウト(メニュー/ツールバー相当)でも保存し直されない', cfiE === cfiA && e.visible && e.cp === cp0, `cp=${e.cp} cfi=${cfiE === cfiA ? '不変' : 'ずれた:' + cfiE}`)
 
   ok('未捕捉の JS 例外が無い', errors.length === 0, errors.slice(0, 3).join(' | '))
 

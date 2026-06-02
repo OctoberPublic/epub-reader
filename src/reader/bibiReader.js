@@ -51,9 +51,6 @@ export class BibiReader {
   #repinDoc = null         // re-pin リスナを張った contentDocument
   #onBibiRelayout = null   // bibi:resized/laid-out 用ハンドラ(再固定の解除に使う)
   #repinDebounce = null    // 再固定のデバウンス
-  #restoreWindowTimer = null // 再固定ウィンドウ終了タイマー
-  #onUserTurn = null       // bibi:is-going-to:move-by 用ハンドラ(ユーザーのページ送りで再固定を止める)
-  #userTurned = false      // ユーザーが実際にページを送ったか。送るまで保存しない(復元/メニュー表示/再レイアウトの揺れの再保存=累積ズレ防止)
 
   constructor({ onBack, onError } = {}) {
     this.#onBack = onBack
@@ -178,12 +175,6 @@ export class BibiReader {
     this.#onBibiProgress = handler
     doc.addEventListener('bibi:scrolled', handler) // ページ送り/スクロール両対応のため両方購読
     doc.addEventListener('bibi:flipped', handler)
-    // 相対ページ送りの直前に外側 doc へ発火(タップ/スワイプ/キー全てに共通、復元/再固定の focus-on や
-    // メニュー表示/再レイアウトでは発火しないことを確認済み)。これが「ユーザーが実際に送った」唯一の確かな
-    // 合図。発火したら (1) 再固定をやめ復元アンカーへ引き戻さない (2) 以後の保存を解禁する。
-    const onTurn = () => { this.#userTurned = true; this.#endRepin() }
-    this.#onUserTurn = onTurn
-    doc.addEventListener('bibi:is-going-to:move-by', onTurn)
   }
 
   // 現在の読書率(%)と内容アンカー(章+段落)を読み取り、変化していれば保存する。
@@ -193,15 +184,16 @@ export class BibiReader {
   #readAndSaveProgress() {
     if (!this.#iframe || !this.#record) return
     if (!this.#restored) return // 復元(focus-on)前は保存しない。Bibi の概算位置で正しいアンカーを上書きしないため。
-    // ユーザーが実際にページを送る(bibi:is-going-to:move-by)まで保存しない。これにより、復元しただけ・
-    // メニュー表示や再レイアウトで位置が少しずれただけ、を再保存して開くたびに前進する累積ズレを防ぐ。
-    if (!this.#userTurned) return
     let doc
     try { doc = this.#iframe.contentDocument } catch { return }
     if (!doc) return
     // 内容アンカー(読み始めの角の段落の spine item index + CSS パス)。レイアウトに依らず同じ内容へ戻れる。
     const loc = this.#readLocator()
     const locStr = loc ? JSON.stringify(loc) : null
+    // 基準アンカー(#restoreLoc=現在の確定位置)に留まっている間は保存しない。メニュー表示や iOS の
+    // ビューポート変化(ツールバー出入り)で少しずれても、再固定(#setupRepin)が基準へ戻すので、
+    // それらは「動いた」とみなされず保存されない=開くたびの累積ズレ防止。
+    if (this.#restoreLoc && (locStr == null || locStr === JSON.stringify(this.#restoreLoc))) return
     // 読書率(% → fraction)。Bibi が算出し .bibi-nombre-percent に表示する値を読む。
     let pct = null
     const el = doc.querySelector('.bibi-nombre-percent')
@@ -209,6 +201,9 @@ export class BibiReader {
     if (pct === this.#lastSavedPct && locStr === this.#lastSavedLoc) return // 無変化はスキップ
     this.#lastSavedPct = pct
     this.#lastSavedLoc = locStr
+    // 実際に基準から動いた=ユーザーが読み進めた。基準を現在地へ更新する(以後の再固定はこの新基準を保ち、
+    // メニュー/再レイアウトのズレはここへ戻す)。再固定は本を閉じるまで常設のまま。
+    if (locStr != null) this.#restoreLoc = loc
     const payload = {}
     if (pct != null) payload.fraction = pct / 100
     if (locStr != null) payload.cfi = locStr
@@ -280,6 +275,10 @@ export class BibiReader {
   // 保存済みアンカーがあれば、レイアウト安定後に focus-on で正確な位置へ復元する予約をする。
   // アンカーが無ければ復元不要として即「保存解禁」する(初読・旧データ向け。Bibi 既定の概算復元に任せる)。
   #scheduleRestore() {
+    // 再固定リスナを常設する(本を閉じるまで)。restoreLoc が無い間は何もしない。
+    // restoreLoc は復元時(下)と、読み進めて保存するたび(#readAndSaveProgress)に「現在地」へ更新される。
+    // これにより、開いた直後のレイアウト揺れも、読書中のメニュー表示/ビューポート変化も、常に現在地へ戻す。
+    this.#setupRepin()
     const raw = this.#record && this.#record.cfi
     let loc = null
     if (raw) { try { loc = JSON.parse(raw) } catch { loc = null } }
@@ -288,9 +287,6 @@ export class BibiReader {
     // Bibi 自身の概算復元 + アプリの resize-follow(~250ms)が落ち着いた頃に正確化する
     // (1200ms 未満なので #setupPageSlide のアニメ無効ゲート内=瞬時移動になる)。
     this.#restoreTimer = setTimeout(() => this.#restoreLocator(loc), 400)
-    // 開いた直後はレイアウトが何度も揺れる(iOS のツールバー出入り/セーフエリア確定)。そのたびに
-    // Bibi が「割合」で再アンカーして復元位置を上書きするため、しばらくレイアウト毎にアンカーへ再固定する。
-    this.#setupRepin()
   }
 
   // 指定アンカーのページへ focus-on(対象要素が在る時だけ)。Bibi の focus-on コマンドへ
@@ -330,12 +326,13 @@ export class BibiReader {
     this.#restored = true // 以後は保存解禁(復元位置からの続きとして保存)
   }
 
-  // 開いた直後のレイアウト揺れ対策: bibi:resized/laid-out のたびにアンカーへ再固定する。
-  // 一定時間(=ツールバー等の確定が落ち着くまで)で解除し、以降の通常リサイズは Bibi 任せに戻す。
+  // 再レイアウト(bibi:resized/laid-out)のたびに「現在地(#restoreLoc)」へ戻す。これはメニュー表示や
+  // iOS のビューポート変化(ツールバー出入り)で Bibi が「割合」再アンカーして位置がずれるのを打ち消す。
+  // 通常のページ送り(flip)は resized/laid-out を出さないので、読書を邪魔しない。本を閉じるまで常設。
   #setupRepin() {
     let doc = null
     try { doc = this.#iframe && this.#iframe.contentDocument } catch { doc = null }
-    if (!doc) return
+    if (!doc || this.#repinDoc === doc) return
     this.#repinDoc = doc
     const onRelayout = () => {
       if (!this.#restoreLoc) return
@@ -345,11 +342,9 @@ export class BibiReader {
     this.#onBibiRelayout = onRelayout
     doc.addEventListener('bibi:resized', onRelayout)   // リサイズ relayout 後(resize-follow/回転/フォント)
     doc.addEventListener('bibi:laid-out', onRelayout)  // 各 layOutBook 後
-    this.#restoreWindowTimer = setTimeout(() => this.#endRepin(), 4000)
   }
 
   #endRepin() {
-    if (this.#restoreWindowTimer) { clearTimeout(this.#restoreWindowTimer); this.#restoreWindowTimer = null }
     if (this.#repinDebounce) { clearTimeout(this.#repinDebounce); this.#repinDebounce = null }
     if (this.#repinDoc && this.#onBibiRelayout) {
       try {
@@ -588,7 +583,6 @@ export class BibiReader {
     this.#lastSavedPct = null
     this.#lastSavedLoc = null
     this.#restored = false
-    this.#userTurned = false
   }
 
   // 進捗購読の後始末。iframe がまだ生きているうちに最終保存(デバウンス待ちの最新値を拾う)し、
@@ -602,11 +596,7 @@ export class BibiReader {
         this.#progressDoc.removeEventListener('bibi:flipped', this.#onBibiProgress)
       } catch { /* 破棄済み等は無視 */ }
     }
-    if (this.#progressDoc && this.#onUserTurn) {
-      try { this.#progressDoc.removeEventListener('bibi:is-going-to:move-by', this.#onUserTurn) } catch { /* 破棄済み等は無視 */ }
-    }
     this.#progressDoc = null
     this.#onBibiProgress = null
-    this.#onUserTurn = null
   }
 }
