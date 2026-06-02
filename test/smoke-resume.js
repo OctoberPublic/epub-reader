@@ -1,10 +1,11 @@
 // 再開位置スモーク: 縦書き reflowable 本で、読んだ位置(内容アンカー)が
 // 「ライブラリへ戻って開き直す」で保たれることを確認する。
 //   - 同一ビューポートで再開 → 保存した段落が画面に出る
-//   - 異なるビューポートで再開(=iOS のビューポート変動の模擬)→ それでも同じ段落が画面に出る
-// 仕組み: bibiReader.js が現在ページ中央の段落を {item, CSSパス} として保存し(cfi)、
-//   再開時に Bibi の focus-on コマンドでその段落のページへ移動する(レイアウト非依存)。
-// 退行防止の要: 旧来は Bibi の「章内割合」復元のみで、章あたりページ数が変わると別ページへズレた。
+//   - 異なるビューポートで再開 → それでも同じ段落が画面に出る
+//   - 開いている最中にビューポートが揺れても(iOS ツールバー出入りの模擬)同じ段落が画面に出る
+// 仕組み: bibiReader.js が現在ページの段落を {item, CSSパス} として cfi に保存し、再開時に Bibi の
+//   focus-on でその段落のページへ移動(レイアウト非依存)。開いた直後はレイアウト揺れのたびに再固定する。
+// 退行防止の要: 旧来は Bibi の「章内割合」復元のみ。章あたりページ数が変わる/開く最中に揺れると別ページへズレた。
 // 使い方: 別ターミナルで `node test/devserver.js` を起動してから `node test/smoke-resume.js`
 import { chromium } from 'playwright'
 import JSZip from 'jszip'
@@ -80,13 +81,22 @@ const getSavedCfi = (page) => page.evaluate(() => new Promise((resolve) => {
   req.onerror = () => resolve(null)
 }))
 
+const setCfi = (page, cfi) => page.evaluate((cfi) => new Promise((resolve) => {
+  const req = indexedDB.open('epub-reader', 1)
+  req.onsuccess = () => { const db = req.result; const tx = db.transaction('books', 'readwrite')
+    const s = tx.objectStore('books'); const g = s.getAll()
+    g.onsuccess = () => { const b = g.result[0]; if (b) { b.cfi = cfi; s.put(b) } }
+    tx.oncomplete = () => { db.close(); resolve(true) }; tx.onerror = () => { db.close(); resolve(false) } }
+  req.onerror = () => resolve(false)
+}), cfi)
+
 const waitReaderReady = async (page) => {
   await page.waitForSelector('#bibi-surface iframe', { timeout: 20000 })
   await page.waitForFunction(() => {
     const f = document.querySelector('#bibi-surface iframe'); const d = f && f.contentDocument
     const pct = d && d.querySelector('.bibi-nombre-percent'); return !!(pct && /\d/.test(pct.textContent || ''))
   }, { timeout: 30000 }).catch(() => {})
-  await wait(1500) // ロード + 復元(focus-on ~700ms)+ resize-follow の安定待ち
+  await wait(1800)
 }
 
 const jumpTo = (page, dest) => page.evaluate((dest) => {
@@ -94,7 +104,7 @@ const jumpTo = (page, dest) => page.evaluate((dest) => {
   d.dispatchEvent(new CustomEvent('bibi:commands:focus-on', { detail: { Destination: dest, Duration: 0 } }))
 }, dest)
 
-// 指定アンカー(item + sel)の要素が、今リーダーの画面内に見えているか
+// 保存アンカー(item + sel)の要素が、今リーダーの画面内に見えているか
 const anchorVisible = (page, loc) => page.evaluate((loc) => {
   const f = document.querySelector('#bibi-surface iframe'); const d = f && f.contentDocument
   if (!d || !loc) return { err: 'no-doc-or-loc' }
@@ -112,13 +122,20 @@ const anchorVisible = (page, loc) => page.evaluate((loc) => {
   return { visible, cp: el.getAttribute && el.getAttribute('data-cp') }
 }, loc)
 
-const reopen = async (page, viewport) => {
+// ライブラリへ戻ってから開き直す。jitter=true なら開く最中に高さを揺らす(iOS ツールバーの模擬)。
+const reopen = async (page, { viewport = null, base = { width: 430, height: 900 }, jitter = false } = {}) => {
   await page.evaluate(() => { location.hash = '' })
   await page.waitForSelector('#library-view:not([hidden])', { timeout: 10000 })
   if (viewport) { await page.setViewportSize(viewport); await wait(300) }
   await page.waitForSelector('.book-card', { timeout: 10000 })
   await wait(300)
   await page.click('.book-card')
+  if (jitter) {
+    await page.waitForSelector('#bibi-surface iframe', { timeout: 20000 })
+    for (const h of [base.height - 60, base.height, base.height - 85, base.height - 20, base.height]) {
+      await page.setViewportSize({ width: base.width, height: h }); await wait(250)
+    }
+  }
   await waitReaderReady(page)
 }
 
@@ -145,22 +162,31 @@ const main = async () => {
   // 第4章(item=3)の段落20付近へ移動(=ユーザーがそこまで読んだ状況)→ 保存(debounce)待ち
   await jumpTo(page, { ItemIndex: 3, ElementSelector: 'p[data-cp="4-20"]' })
   await wait(1500)
-  const cfi = await getSavedCfi(page)
-  let savedLoc = null; try { savedLoc = cfi ? JSON.parse(cfi) : null } catch {}
-  ok('内容アンカー(章+段落)が cfi に保存される', savedLoc && typeof savedLoc.item === 'number' && !!savedLoc.sel, `cfi=${cfi}`)
+  const cfiA = await getSavedCfi(page)
+  let savedLoc = null; try { savedLoc = cfiA ? JSON.parse(cfiA) : null } catch {}
+  ok('内容アンカー(章+段落)が cfi に保存される', savedLoc && typeof savedLoc.item === 'number' && !!savedLoc.sel, `cfi=${cfiA}`)
   const before = await anchorVisible(page, savedLoc)
   ok('移動直後、その段落が画面に出ている', before.visible, `cp=${before.cp}`)
   const cp0 = before.cp
 
-  // (A) 同一サイズで開き直す → 同じ段落が画面に出る
-  await reopen(page, null)
-  const afterSame = await anchorVisible(page, savedLoc)
-  ok('同一サイズで開き直しても同じ段落が画面に出る', afterSame.visible && afterSame.cp === cp0, `cp=${afterSame.cp}`)
+  // (A) 同一サイズで開き直す
+  await setCfi(page, cfiA)
+  await reopen(page, {})
+  const a = await anchorVisible(page, savedLoc)
+  ok('同一サイズで開き直しても同じ段落が画面に出る', a.visible && a.cp === cp0, `cp=${a.cp}`)
 
-  // (B) 異なるサイズで開き直す(ビューポート変動の模擬)→ それでも同じ段落が画面に出る
-  await reopen(page, S2)
-  const afterDiff = await anchorVisible(page, savedLoc)
-  ok('別サイズで開き直しても同じ段落が画面に出る(レイアウト非依存の再開)', afterDiff.visible && afterDiff.cp === cp0, `cp=${afterDiff.cp}`)
+  // (B) 異なるサイズで開き直す(ビューポート変動の模擬)
+  await setCfi(page, cfiA)
+  await reopen(page, { viewport: S2 })
+  const b = await anchorVisible(page, savedLoc)
+  ok('別サイズで開き直しても同じ段落が画面に出る(レイアウト非依存の再開)', b.visible && b.cp === cp0, `cp=${b.cp}`)
+
+  // (C) 開いている最中にビューポートが揺れても保持される(iOS ツールバー出入りの模擬。re-pin の退行防止)
+  await page.setViewportSize(S1); await wait(200)
+  await setCfi(page, cfiA)
+  await reopen(page, { jitter: true, base: S1 })
+  const c = await anchorVisible(page, savedLoc)
+  ok('開く最中に揺れても同じ段落が画面に出る(再固定 re-pin)', c.visible && c.cp === cp0, `cp=${c.cp}`)
 
   ok('未捕捉の JS 例外が無い', errors.length === 0, errors.slice(0, 3).join(' | '))
 

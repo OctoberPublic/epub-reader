@@ -47,6 +47,11 @@ export class BibiReader {
   #lastSavedLoc = null     // 直近に保存した内容アンカー(JSON文字列、無変化スキップ用)
   #restored = false        // 内容アンカーでの復元(focus-on)が済んだか。済むまで保存はガード
   #restoreTimer = null     // 復元を遅延実行するタイマー(レイアウト安定待ち)
+  #restoreLoc = null       // 復元対象アンカー({item, sel})。再固定(re-pin)に使う
+  #repinDoc = null         // re-pin リスナを張った contentDocument
+  #onBibiRelayout = null   // bibi:resized/laid-out 用ハンドラ(再固定の解除に使う)
+  #repinDebounce = null    // 再固定のデバウンス
+  #restoreWindowTimer = null // 再固定ウィンドウ終了タイマー
 
   constructor({ onBack, onError } = {}) {
     this.#onBack = onBack
@@ -248,20 +253,22 @@ export class BibiReader {
     let loc = null
     if (raw) { try { loc = JSON.parse(raw) } catch { loc = null } }
     if (!loc || typeof loc.item !== 'number') { this.#restored = true; return }
+    this.#restoreLoc = loc
     // Bibi 自身の概算復元 + アプリの resize-follow(~250ms)が落ち着いた頃に正確化する
     // (1200ms 未満なので #setupPageSlide のアニメ無効ゲート内=瞬時移動になる)。
-    this.#restoreTimer = setTimeout(() => this.#restoreLocator(loc), 600)
+    this.#restoreTimer = setTimeout(() => this.#restoreLocator(loc), 400)
+    // 開いた直後はレイアウトが何度も揺れる(iOS のツールバー出入り/セーフエリア確定)。そのたびに
+    // Bibi が「割合」で再アンカーして復元位置を上書きするため、しばらくレイアウト毎にアンカーへ再固定する。
+    this.#setupRepin()
   }
 
-  // 内容アンカー(item + CSS セレクタ)のページへ Bibi を移動させる(レイアウト非依存)。
-  // Bibi の focus-on コマンドへ Destination を渡す(CFI ナビと同じ機構)。完了で保存を解禁する。
-  // セレクタが解決できない時は章頭へ飛ばさず Bibi の概算復元を尊重する(数回だけロード待ちで再試行)。
-  #restoreLocator(loc, tries = 0) {
-    this.#restoreTimer = null
+  // 指定アンカーのページへ focus-on(対象要素が在る時だけ)。Bibi の focus-on コマンドへ
+  // Destination を渡す(CFI ナビと同じ機構=レイアウト非依存)。要素が見つからなければ動かさない
+  // (章頭へ飛ばさず Bibi の概算復元を尊重)。戻り値: 移動できた(=要素が在った)か。
+  #focusOnAnchor(loc) {
     let doc = null
     try { doc = this.#iframe && this.#iframe.contentDocument } catch { doc = null }
-    if (!doc) { this.#restored = true; return }
-    // セレクタ指定がある場合は、対象 item の本文に要素が在ることを先に確認する。
+    if (!doc) return false
     let found = !loc.sel
     if (loc.sel) {
       try {
@@ -269,22 +276,59 @@ export class BibiReader {
           if (typeof ifr.Index !== 'number' || ifr.Index !== loc.item) continue
           let idoc = null
           try { idoc = ifr.contentDocument } catch { idoc = null }
-          if (idoc && idoc.querySelector(loc.sel)) { found = true }
+          found = !!(idoc && idoc.querySelector(loc.sel))
           break
         }
       } catch { /* ignore */ }
-      if (!found && tries < 4) { // item iframe 未ロード等。少し待って再試行
-        this.#restoreTimer = setTimeout(() => this.#restoreLocator(loc, tries + 1), 400)
-        return
-      }
-      if (!found) { this.#restored = true; return } // 最後まで見つからない→Bibi の概算復元を尊重(動かさない)
+      if (!found) return false
     }
     const dest = { ItemIndex: loc.item }
     if (loc.sel) dest.ElementSelector = loc.sel
     try {
       doc.dispatchEvent(new CustomEvent('bibi:commands:focus-on', { detail: { Destination: dest, Duration: 0 } }))
     } catch { /* 失敗時は Bibi の概算復元のまま */ }
+    return true
+  }
+
+  // 初回復元。レイアウト未確定で要素がまだ無ければ少し待って数回まで再試行。成功/打ち切りで保存解禁。
+  #restoreLocator(loc, tries = 0) {
+    this.#restoreTimer = null
+    if (!this.#iframe) { this.#restored = true; return }
+    const done = this.#focusOnAnchor(loc)
+    if (!done && tries < 5) { this.#restoreTimer = setTimeout(() => this.#restoreLocator(loc, tries + 1), 400); return }
     this.#restored = true // 以後は保存解禁(復元位置からの続きとして保存)
+  }
+
+  // 開いた直後のレイアウト揺れ対策: bibi:resized/laid-out のたびにアンカーへ再固定する。
+  // 一定時間(=ツールバー等の確定が落ち着くまで)で解除し、以降の通常リサイズは Bibi 任せに戻す。
+  #setupRepin() {
+    let doc = null
+    try { doc = this.#iframe && this.#iframe.contentDocument } catch { doc = null }
+    if (!doc) return
+    this.#repinDoc = doc
+    const onRelayout = () => {
+      if (!this.#restoreLoc) return
+      if (this.#repinDebounce) clearTimeout(this.#repinDebounce)
+      this.#repinDebounce = setTimeout(() => { if (this.#restoreLoc) this.#focusOnAnchor(this.#restoreLoc) }, 150)
+    }
+    this.#onBibiRelayout = onRelayout
+    doc.addEventListener('bibi:resized', onRelayout)   // リサイズ relayout 後(resize-follow/回転/フォント)
+    doc.addEventListener('bibi:laid-out', onRelayout)  // 各 layOutBook 後
+    this.#restoreWindowTimer = setTimeout(() => this.#endRepin(), 4000)
+  }
+
+  #endRepin() {
+    if (this.#restoreWindowTimer) { clearTimeout(this.#restoreWindowTimer); this.#restoreWindowTimer = null }
+    if (this.#repinDebounce) { clearTimeout(this.#repinDebounce); this.#repinDebounce = null }
+    if (this.#repinDoc && this.#onBibiRelayout) {
+      try {
+        this.#repinDoc.removeEventListener('bibi:resized', this.#onBibiRelayout)
+        this.#repinDoc.removeEventListener('bibi:laid-out', this.#onBibiRelayout)
+      } catch { /* 破棄済み等は無視 */ }
+    }
+    this.#repinDoc = null
+    this.#onBibiRelayout = null
+    this.#restoreLoc = null
   }
 
   // ロード失敗(iframe error / タイムアウト): エラー表示して脱出ボタンを露出する。
@@ -500,6 +544,7 @@ export class BibiReader {
     this.#clearPoll()
     this.#stopResizeFollow()
     if (this.#restoreTimer) { clearTimeout(this.#restoreTimer); this.#restoreTimer = null } // 復元待ち中の離脱は復元しない
+    this.#endRepin() // 再固定リスナ/タイマーを解除
     this.#teardownProgress() // iframe 破棄前に最終保存＋リスナ解除(復元前なら #restored ガードで保存しない)
     if (this.#loadTimer) { clearTimeout(this.#loadTimer); this.#loadTimer = null }
     if (this.#autoShowTimer) { clearTimeout(this.#autoShowTimer); this.#autoShowTimer = null }
