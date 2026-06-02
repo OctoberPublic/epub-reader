@@ -44,6 +44,9 @@ export class BibiReader {
   #onBibiProgress = null   // bibi:scrolled/bibi:flipped 用ハンドラ(解除に使う)
   #progressDebounce = null
   #lastSavedPct = null     // 直近に保存した % (無変化スキップ用)
+  #lastSavedLoc = null     // 直近に保存した内容アンカー(JSON文字列、無変化スキップ用)
+  #restored = false        // 内容アンカーでの復元(focus-on)が済んだか。済むまで保存はガード
+  #restoreTimer = null     // 復元を遅延実行するタイマー(レイアウト安定待ち)
 
   constructor({ onBack, onError } = {}) {
     this.#onBack = onBack
@@ -145,6 +148,7 @@ export class BibiReader {
     const esc = $('reader-escape')
     if (esc) esc.hidden = true
     this.#setupProgress() // 本文が出たので読書進捗の購読を開始
+    this.#scheduleRestore() // 保存済みの内容アンカーがあれば、レイアウト安定後に正確な位置へ復元
   }
 
   // 読書進捗の取得を開始する。Bibi の読書率は iframe 内 .bibi-nombre-percent に整数%で表示され、
@@ -166,21 +170,121 @@ export class BibiReader {
     doc.addEventListener('bibi:flipped', handler)
   }
 
-  // 現在の読書率(%)を読み取り、変化していれば fraction(0..1) として保存する。
+  // 現在の読書率(%)と内容アンカー(章+段落)を読み取り、変化していれば保存する。
+  // fraction はライブラリのカード表示用。cfi には内容アンカー(JSON)を入れ、再開時に focus-on で正確に復元する。
   #readAndSaveProgress() {
     if (!this.#iframe || !this.#record) return
+    if (!this.#restored) return // 復元(focus-on)前は保存しない。Bibi の概算位置で正しいアンカーを上書きしないため。
     let doc
     try { doc = this.#iframe.contentDocument } catch { return }
     if (!doc) return
+    // 読書率(% → fraction)
+    let pct = null
     const el = doc.querySelector('.bibi-nombre-percent')
-    if (!el) return // 未生成なら静かに skip(次イベントで再取得)
-    const m = (el.textContent || '').match(/(\d+)/)
-    if (!m) return
-    const pct = Math.max(0, Math.min(100, parseInt(m[1], 10)))
-    if (pct === this.#lastSavedPct) return // 無変化(100%後の再発火含む)はスキップ
+    if (el) { const m = (el.textContent || '').match(/(\d+)/); if (m) pct = Math.max(0, Math.min(100, parseInt(m[1], 10))) }
+    // 内容アンカー(画面中央の段落の spine item index + CSS パス)。レイアウトに依らず同じ内容へ戻れる。
+    const loc = this.#readLocator()
+    const locStr = loc ? JSON.stringify(loc) : null
+    if (pct === this.#lastSavedPct && locStr === this.#lastSavedLoc) return // 無変化はスキップ
     this.#lastSavedPct = pct
+    this.#lastSavedLoc = locStr
+    const payload = {}
+    if (pct != null) payload.fraction = pct / 100
+    if (locStr != null) payload.cfi = locStr
+    if (payload.fraction == null && payload.cfi == null) return
     // await しない(読書を妨げない)。updateProgress が lastOpenedAt も更新する(意図どおり)。
-    updateProgress(this.#record.id, { fraction: pct / 100 }).catch((e) => console.warn('進捗の保存に失敗:', e))
+    updateProgress(this.#record.id, payload).catch((e) => console.warn('進捗の保存に失敗:', e))
+  }
+
+  // 画面中央に見えている段落の「spine item index + CSS パス」を内容アンカーとして読む。
+  // ネストした spine-item iframe(本文)へ降りて、中央点の最寄りブロック要素を特定する。失敗時は null。
+  #readLocator() {
+    if (!this.#iframe) return null
+    let doc
+    try { doc = this.#iframe.contentDocument } catch { return null }
+    if (!doc) return null
+    try {
+      const cx = Math.floor(this.#iframe.clientWidth / 2)
+      const cy = Math.floor(this.#iframe.clientHeight / 2)
+      let el = doc.elementFromPoint(cx, cy)
+      let item = null
+      let guard = 0
+      while (el && el.tagName === 'IFRAME' && guard++ < 4) {
+        let innerDoc
+        try { innerDoc = el.contentDocument } catch { return null }
+        if (!innerDoc) return null
+        if (typeof el.Index === 'number') item = el.Index // Bibi が spine item iframe に付ける番号
+        const r = el.getBoundingClientRect()
+        const inner = innerDoc.elementFromPoint(Math.floor(cx - r.left), Math.floor(cy - r.top))
+        if (inner && inner.tagName === 'IFRAME') { el = inner; continue }
+        if (item == null) return null
+        let node = inner
+        while (node && node.nodeType === 1 && !/^(P|H1|H2|H3|H4|H5|H6|LI|BLOCKQUOTE|FIGURE|IMG|DIV|SECTION)$/.test(node.tagName)) node = node.parentElement
+        const sel = node ? this.#cssPath(node) : null
+        return { item, sel }
+      }
+    } catch { /* レイアウト過渡などは無視 */ }
+    return null
+  }
+
+  // 要素までの一意な CSS パス(html を除き body から nth-child で辿る)。querySelector で再特定できる形。
+  #cssPath(el) {
+    const parts = []
+    let node = el
+    while (node && node.nodeType === 1 && node.tagName !== 'HTML') {
+      const parent = node.parentElement
+      if (!parent) break
+      const idx = Array.prototype.indexOf.call(parent.children, node) + 1
+      parts.unshift(node.tagName.toLowerCase() + ':nth-child(' + idx + ')')
+      node = parent
+    }
+    return parts.length ? parts.join('>') : null
+  }
+
+  // 保存済みアンカーがあれば、レイアウト安定後に focus-on で正確な位置へ復元する予約をする。
+  // アンカーが無ければ復元不要として即「保存解禁」する(初読・旧データ向け。Bibi 既定の概算復元に任せる)。
+  #scheduleRestore() {
+    const raw = this.#record && this.#record.cfi
+    let loc = null
+    if (raw) { try { loc = JSON.parse(raw) } catch { loc = null } }
+    if (!loc || typeof loc.item !== 'number') { this.#restored = true; return }
+    // Bibi 自身の概算復元 + アプリの resize-follow(~250ms)が落ち着いた頃に正確化する
+    // (1200ms 未満なので #setupPageSlide のアニメ無効ゲート内=瞬時移動になる)。
+    this.#restoreTimer = setTimeout(() => this.#restoreLocator(loc), 600)
+  }
+
+  // 内容アンカー(item + CSS セレクタ)のページへ Bibi を移動させる(レイアウト非依存)。
+  // Bibi の focus-on コマンドへ Destination を渡す(CFI ナビと同じ機構)。完了で保存を解禁する。
+  // セレクタが解決できない時は章頭へ飛ばさず Bibi の概算復元を尊重する(数回だけロード待ちで再試行)。
+  #restoreLocator(loc, tries = 0) {
+    this.#restoreTimer = null
+    let doc = null
+    try { doc = this.#iframe && this.#iframe.contentDocument } catch { doc = null }
+    if (!doc) { this.#restored = true; return }
+    // セレクタ指定がある場合は、対象 item の本文に要素が在ることを先に確認する。
+    let found = !loc.sel
+    if (loc.sel) {
+      try {
+        for (const ifr of doc.querySelectorAll('iframe')) {
+          if (typeof ifr.Index !== 'number' || ifr.Index !== loc.item) continue
+          let idoc = null
+          try { idoc = ifr.contentDocument } catch { idoc = null }
+          if (idoc && idoc.querySelector(loc.sel)) { found = true }
+          break
+        }
+      } catch { /* ignore */ }
+      if (!found && tries < 4) { // item iframe 未ロード等。少し待って再試行
+        this.#restoreTimer = setTimeout(() => this.#restoreLocator(loc, tries + 1), 400)
+        return
+      }
+      if (!found) { this.#restored = true; return } // 最後まで見つからない→Bibi の概算復元を尊重(動かさない)
+    }
+    const dest = { ItemIndex: loc.item }
+    if (loc.sel) dest.ElementSelector = loc.sel
+    try {
+      doc.dispatchEvent(new CustomEvent('bibi:commands:focus-on', { detail: { Destination: dest, Duration: 0 } }))
+    } catch { /* 失敗時は Bibi の概算復元のまま */ }
+    this.#restored = true // 以後は保存解禁(復元位置からの続きとして保存)
   }
 
   // ロード失敗(iframe error / タイムアウト): エラー表示して脱出ボタンを露出する。
@@ -395,7 +499,8 @@ export class BibiReader {
   destroy() {
     this.#clearPoll()
     this.#stopResizeFollow()
-    this.#teardownProgress() // iframe 破棄前に最終保存＋リスナ解除
+    if (this.#restoreTimer) { clearTimeout(this.#restoreTimer); this.#restoreTimer = null } // 復元待ち中の離脱は復元しない
+    this.#teardownProgress() // iframe 破棄前に最終保存＋リスナ解除(復元前なら #restored ガードで保存しない)
     if (this.#loadTimer) { clearTimeout(this.#loadTimer); this.#loadTimer = null }
     if (this.#autoShowTimer) { clearTimeout(this.#autoShowTimer); this.#autoShowTimer = null }
     const esc = $('reader-escape')
@@ -405,6 +510,8 @@ export class BibiReader {
       this.#iframe = null
     }
     this.#lastSavedPct = null
+    this.#lastSavedLoc = null
+    this.#restored = false
   }
 
   // 進捗購読の後始末。iframe がまだ生きているうちに最終保存(デバウンス待ちの最新値を拾う)し、
