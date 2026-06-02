@@ -50,8 +50,8 @@ button { cursor: pointer; font-family: inherit; }
 }
 .icon-button:active { background: rgba(127, 127, 127, 0.2); }
 
-/* ライブラリ検索の虫眼鏡アイコン・並べ替えアイコンを2倍サイズに(枠も合わせて拡大) */
-#search-toggle, #sort-button { font-size: 44px; width: 56px; height: 56px; }
+/* 検索・並べ替えアイコンは字だけ2倍に(枠幅は他のアイコンと同じ40pxのまま=均等配置) */
+#search-toggle, #sort-button { font-size: 44px; }
 
 .primary-button {
   padding: 12px 22px;
