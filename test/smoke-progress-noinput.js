@@ -1,8 +1,8 @@
-// 進捗保存の回帰(実機スワイプ相当): 生のポインタ/タッチ入力が外側 Bibi doc に届かない経路でも、
-// ページ送り(bibi:is-going-to:move-by)が起きれば進捗が保存されることを確認する。
-// 実機 iPad ではタップ/スワイプの生入力が入れ子の本文 iframe に入り外側 doc へ届かないことがあり、
-// それでも進捗が更新されるべき。ここでは bibi:commands:move-by を直接発火してページを送り、
-// 生入力イベントを一切介さずに fraction が保存されることを検証する。
+// 進捗保存の回帰(実機スワイプ/メニュー非表示時相当): 生のポインタ/タッチ入力が外側 Bibi doc に
+// 届かない経路でも、実際にページが進めば進捗が保存されることを確認する。保存可否は入力イベントではなく
+// 「現在位置が復元アンカーから動いたか」で判定する(bibiReader.js #readAndSaveProgress)ため、
+// メニュー表示の有無やジェスチャ種別に依らず働くべき。ここでは bibi:commands:move-by を直接発火して
+// 生入力イベントを一切介さずにページを送り、fraction が保存されることを検証する。
 import { chromium } from 'playwright'
 import { makeVerticalEpub } from './make-vertical-epub.js'
 
