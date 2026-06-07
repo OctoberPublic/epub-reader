@@ -7,12 +7,16 @@ import { importBookFiles } from './library/importBook.js'
 import { getBook, migrateCovers, markOpened } from './storage/metadata.js'
 import { isStorageAvailable, hasBookFile } from './storage/books.js'
 import { isStandalone, requestPersist } from './storage/persist.js'
+import * as sync from './sync/sync.js'
+import { backfillStableKeys } from './sync/identity.js'
+import { SyncSettingsView } from './sync/settingsView.js'
 import { APP_VERSION } from './version.js'
 
 const $ = (id) => document.getElementById(id)
 
 const library = new LibraryView({ onOpen: (id) => openBook(id), onError: (msg) => toast(msg) })
 const reader = new BibiReader({ onBack: () => goLibrary(), onError: (msg) => toast(msg) })
+const syncSettings = new SyncSettingsView()
 
 // ---- 画面切り替え ----
 function showScreen(name) {
@@ -43,6 +47,9 @@ async function route() {
     reader.hide()
     showScreen('library')
     await library.refresh()
+    // ライブラリへ来るたび裏で同期(読書終了直後の進捗 push と、他端末の変更の pull を兼ねる)。
+    // await しない(表示を待たせない)。pull で更新があれば setOnApplied 経由で再描画される。
+    sync.sync()
   }
 }
 
@@ -80,7 +87,10 @@ async function handleFiles(fileList) {
   const { imported, skipped, errors } = await importBookFiles(fileList, (done, total) => {
     if (total > 1) toast(`取り込み中… ${done}/${total}`)
   })
-  if (imported.length) await library.refresh()
+  if (imported.length) {
+    await library.refresh()
+    sync.schedulePush() // 取り込んだ本の状態(stableKey)をリモートにも載せる
+  }
 
   const parts = []
   if (imported.length) parts.push(`${imported.length} 冊を追加`)
@@ -111,6 +121,18 @@ function wireGlobal() {
   // 非常脱出ボタン: Bibi の状態に関わらず確実にライブラリへ戻す(白画面対策)。
   $('reader-escape').addEventListener('click', () => goLibrary())
   window.addEventListener('hashchange', route)
+
+  // ---- 端末間同期の配線 ----
+  $('sync-settings-button').addEventListener('click', () => syncSettings.open())
+  // 同期中は歯車アイコンを回す(進行表示)
+  sync.onStatusChange((st) => $('sync-settings-button').classList.toggle('is-syncing', st.syncing))
+  // pull でローカルが更新されたら、ライブラリ表示中なら再描画して反映する
+  sync.setOnApplied(() => { if (!location.hash) library.refresh().catch(() => {}) })
+  // バックグラウンド化(ホームへ戻る等)時にベストエフォートで push。iOS は PWA を容赦なく kill
+  // するため保証は無いが、失敗しても次回起動時の同期で回収される(sync.js 冒頭コメント参照)。
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') sync.flush()
+  })
 }
 
 function showStorageHintIfNeeded() {
@@ -144,11 +166,17 @@ async function boot() {
   // 旧形式(Blob)表紙を data URL へ移行(表紙破損対策)。失敗しても起動は続行。
   await migrateCovers().catch((e) => console.warn('表紙移行に失敗:', e))
 
+  // 端末間同期用の安定キーを既存レコードへ付与(同期導入前に取り込んだ本への一度きりの移行)。
+  await backfillStableKeys().catch((e) => console.warn('安定キーの付与に失敗:', e))
+
   // 起動時は常にライブラリから開く。前回開いていた本の URL(#read=...)が残っていても、
   // 読み込めない本に当たって起動時に固まらないよう、フラグメントを消してから描画する。
   if (/^#read=/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search)
 
   await route()
+  // 起動直後に一度同期(route 内のライブラリ経路でも呼ばれるが、syncing ガードで二重実行はされない)。
+  // 前回バックグラウンド kill で push し損ねた分も、ここでローカルの新しい updatedAt が push される。
+  sync.sync()
 }
 
 boot()

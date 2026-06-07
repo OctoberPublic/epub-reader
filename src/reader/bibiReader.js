@@ -18,7 +18,7 @@
 // iframe を transform しないのが要点で、iOS の iframe 合成バグを原理的に回避する。
 // 横書き本/マンガ=pre-paginated は pagination=x の影響を受けず、スライド演出も対象外。
 
-import { putBook, updateProgress } from '../storage/metadata.js'
+import { putBook, updateProgress, touch } from '../storage/metadata.js'
 import { getBookFile } from '../storage/books.js'
 import { extractIdentifier } from '../util/epubMeta.js'
 import { BookSearch } from './bookSearch.js'
@@ -545,6 +545,7 @@ export class BibiReader {
     else singles.push(lead)
     singles.sort((a, b) => a - b)
     rec.singlePages = singles
+    touch(rec, 'singlePages') // 端末間同期(LWW)用の更新時刻
 
     putBook(rec).catch((e) => console.warn('単独ページ設定の保存に失敗:', e)).finally(() => {
       this.open(rec) // 新しい単独集合で再ページネーション

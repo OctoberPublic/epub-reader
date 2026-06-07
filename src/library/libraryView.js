@@ -5,6 +5,7 @@
 
 import { getAllBooks, deleteBook, setFavorite, setWantToRead } from '../storage/metadata.js'
 import { deleteBookFile } from '../storage/books.js'
+import { schedulePush } from '../sync/sync.js'
 
 const $ = (id) => document.getElementById(id)
 
@@ -308,6 +309,7 @@ export class LibraryView {
     if (rec && rec !== book) rec.favorite = next
     try {
       await setFavorite(book.id, next)
+      schedulePush() // 端末間同期へ(まとめ push。未設定なら何もしない)
     } catch (e) {
       console.error('お気に入りの更新に失敗:', e)
       this.#onError?.('お気に入りの更新に失敗しました')
@@ -325,6 +327,7 @@ export class LibraryView {
     if (rec && rec !== book) rec.wantToRead = next
     try {
       await setWantToRead(book.id, next)
+      schedulePush() // 端末間同期へ(まとめ push。未設定なら何もしない)
     } catch (e) {
       console.error('読みたいリストの更新に失敗:', e)
       this.#onError?.('読みたいリストの更新に失敗しました')

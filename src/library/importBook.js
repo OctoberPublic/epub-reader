@@ -6,6 +6,7 @@
 import { extractMetadata } from '../util/epubMeta.js'
 import { saveBookFile, hasBookFile, deleteBookFile } from '../storage/books.js'
 import { putBook, getAllBooks, deleteBook } from '../storage/metadata.js'
+import { computeStableKey } from '../sync/identity.js'
 
 const isEpubFile = (file) => /\.epub$/i.test(file?.name || '') ||
   file?.type === 'application/epub+zip'
@@ -23,6 +24,9 @@ export async function importBookFile(file) {
   // EPUB 本体を保存
   await saveBookFile(id, file)
 
+  // 端末間同期で「同じ本」を突き合わせる安定キー(dc:identifier 優先。詳細は sync/identity.js)
+  const { stableKey, identifier } = await computeStableKey({ sourceName: file.name ?? '', size: file.size ?? 0 }, file)
+
   const record = {
     id,
     title: meta.title,
@@ -36,6 +40,9 @@ export async function importBookFile(file) {
     lastOpenedAt: 0,
     cfi: null,
     fraction: 0,
+    identifier,
+    stableKey,
+    updatedAt: {}, // フィールド単位の更新時刻(同期の LWW 用)。取り込み直後は空=他端末の実績ある状態に負ける
   }
   await putBook(record)
   return record

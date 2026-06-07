@@ -12,6 +12,8 @@ EPUB 描画には [Bibi](https://github.com/satorumurmur/bibi)(MIT)を使用し�
 - 文字サイズ・目次・読書位置の記憶は Bibi 内蔵 UI(画面中央タップで表示)。左上に「ライブラリへ戻る」ボタンを統合
 - 複数ファイル/フォルダ一括取り込み、同名・同サイズの重複スキップ
 - 書籍データは端末の **IndexedDB** にローカル保存(サーバには送らない)。オフライン閲覧可
+- **iPhone/iPad 間の状態同期**(任意): 読書進捗・お気に入り・読みたい本を、自分の GitHub
+  プライベートリポジトリ経由で同期(下記「端末間の同期」)。EPUB 本体は同期しない
 
 ## ディレクトリ構成
 
@@ -27,6 +29,7 @@ src/
   storage/                IndexedDB(書籍本体・メタ・読書位置)/ 永続化(persist)
   library/                取り込み・本棚
   reader/bibiReader.js    Bibi を全画面 iframe で開くラッパ + メニュー統合ボタン
+  sync/                   端末間同期(GitHub Contents API・LWWマージ・設定パネル)
   util/                   メタデータ抽出(epubMeta)+ 最小ZIP読取(zipReader)
   version.js              バージョン表示文字列
 test/                     E2E スモークテスト(Playwright)+ devserver(Range対応)
@@ -66,6 +69,11 @@ node test/smoke-import.js       # 取り込み/重複スキップ/フィルタ
 node test/smoke-bibi.js         # 縦書きの右→左横めくり
 node test/smoke-bibi-fxl.js     # 固定レイアウト昇格・見開き・SVG正規化
 node test/smoke-bibi-spread.js  # 見開きの単独ページ指定・メニュー統合ボタン
+node test/smoke-sync.js         # 端末間同期(偽 GitHub で 2 端末の往復)
+
+# 単体テスト(ブラウザ・devserver 不要)
+node test/unit-merge.js         # 同期マージ(LWW)の純ロジック
+node test/unit-github.js        # GitHub クライアント(base64/競合リトライ)
 ```
 
 ## iPhone / iPad で使う(Mac 不要)
@@ -82,6 +90,34 @@ node test/smoke-bibi-spread.js  # 見開きの単独ページ指定・メニュ�
 更新反映のため)、ライブラリ下部の**バージョン表示**で反映を確認します。
 
 > 書籍データは端末内にのみ保存されるため、リポジトリが public でもプライバシー上の問題はありません。
+
+## 端末間の同期(任意)
+
+iPhone と iPad で読書進捗・お気に入り・読みたい本を揃えられます(例: iPhone で読み進めた本を
+iPad で開くと同じ位置から再開)。同期データは**自分の GitHub プライベートリポジトリ**に
+`library.json` として保存されます。アプリにサーバは無く、端末↔GitHub の直接通信のみです。
+
+**EPUB 本体は同期しません。** 両方の端末に同じ EPUB ファイルを取り込んでください
+(EPUB 内の識別子で同じ本を突き合わせます)。
+
+セットアップ(各端末で初回のみ):
+
+1. GitHub で**非公開リポジトリ**を作る(例: `epub-reader-sync`。空のままでよい)
+2. **Fine-grained PAT** を発行: GitHub の Settings → Developer settings →
+   Personal access tokens → Fine-grained tokens。
+   Repository access は「Only select repositories」で同期用リポジトリのみ、
+   Permissions は **Contents: Read and write** のみ
+3. アプリのライブラリ画面の**歯車ボタン** → ユーザー名/リポジトリ名/トークンを入力 →
+   「保存して接続テスト」
+4. もう一方の端末でも 1〜3 を実施(トークンは端末ごとに別発行を推奨)
+
+同期は起動時・ライブラリ表示時・バックグラウンド移行時に自動で行われ、歯車の「今すぐ同期」でも
+実行できます。マージは本ごと・フィールドごとの「更新時刻が新しい方を採用」(削除は同期しない)。
+オフラインでも通常どおり使え、次にオンラインで起動した時に差分が同期されます。
+
+> トークンは端末内(localStorage)にのみ保存されます。本アプリは外部スクリプトを読み込まない
+> 単一オリジンの PWA で、トークンの権限も同期用リポジトリの Contents に限定されるため、
+> 漏えいリスクは限定的です。
 
 ### ストレージ永続化について
 iOS は無操作が続くとサイトデータを削除することがありますが、**ホーム画面に追加した PWA は対象外**になりやすく、本アプリは起動時に `navigator.storage.persist()` で永続化を要求します。万一消えても、元の EPUB を再取り込みすれば復旧できます(原本は手元に残す前提)。
