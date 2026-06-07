@@ -20,10 +20,12 @@ const coverPage = `<?xml version="1.0" encoding="utf-8"?>
 </svg>
 </div></body></html>`
 
-// 縦書き本文ページ
-const vtext = (k) => {
+// 縦書き本文ページ。withRuby を指定したページには「複数の <ruby> をまたぐ熟語」を含む
+// 段落を足す(本文検索のルビ除外=rt を読み飛ばして基字を連結して一致できるかの検証用)。
+const vtext = (k, withRuby = false) => {
   let paras = ''
   for (let i = 0; i < 12; i++) paras += `<p>これは縦書きの本文テキストです。右から左へ読み進めます。ページ${k}の段落${i + 1}。</p>`
+  if (withRuby) paras += '<p>この本には<ruby>漢字<rt>かんじ</rt></ruby><ruby>検索<rt>けんさく</rt></ruby>の試験文がある。</p>'
   return `<?xml version="1.0" encoding="utf-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="ja" class="vrtl">
 <head><title>Page ${k}</title>
@@ -32,7 +34,7 @@ const vtext = (k) => {
 <body><h1>PAGE ${k}</h1>${paras}</body></html>`
 }
 
-export async function makeVerticalEpub({ pageCount = 6 } = {}) {
+export async function makeVerticalEpub({ pageCount = 6, rubyOnPage = 0 } = {}) {
   const manifest = ['<item id="cover" href="cover.xhtml" media-type="application/xhtml+xml" properties="svg"/>']
   const spine = ['<itemref idref="cover"/>']
   for (let k = 1; k <= pageCount; k++) {
@@ -72,6 +74,6 @@ export async function makeVerticalEpub({ pageCount = 6 } = {}) {
   zip.file('OEBPS/content.opf', opf)
   zip.file('OEBPS/nav.xhtml', nav)
   zip.file('OEBPS/cover.xhtml', coverPage)
-  for (let k = 1; k <= pageCount; k++) zip.file(`OEBPS/p${k}.xhtml`, vtext(k))
+  for (let k = 1; k <= pageCount; k++) zip.file(`OEBPS/p${k}.xhtml`, vtext(k, k === rubyOnPage))
   return zip.generateAsync({ type: 'nodebuffer' })
 }

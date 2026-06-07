@@ -5,6 +5,8 @@
 // 「ライブラリへ戻る」ボタンは Bibi のメニュー左群(#bibi-menu-l)の ul へ差し込む
 // (中央タップで出る Bibi メニューと一緒に表示)。「このページを単独/組 切替」は使用頻度が
 // 低いため、設定(歯車)サブパネル #bibi-subpanel_config 内の項目として差し込む。
+// 「本文検索」ボタンはメニュー右群(#bibi-menu-r)の先頭へ差し込み、親側のオーバーレイ
+// (bookSearch.js)を開く。検索・ジャンプ・ハイライトの仕組みは bookSearch.js 冒頭を参照。
 // また iPad のウィンドウ可変(Stage Manager/Split View)に追従するため、ResizeObserver で
 // iframe のサイズ変化を監視し、Bibi に再レイアウト用イベントを送る。
 // 縦書き小説(reflowable)のページめくりを「左右スライド」にする仕組み(2段構え):
@@ -19,6 +21,7 @@
 import { putBook, updateProgress } from '../storage/metadata.js'
 import { getBookFile } from '../storage/books.js'
 import { extractIdentifier } from '../util/epubMeta.js'
+import { BookSearch } from './bookSearch.js'
 
 const $ = (id) => document.getElementById(id)
 
@@ -55,6 +58,7 @@ export class BibiReader {
   #leaving = false         // 「ライブラリへ戻る」ボタンで離脱中。離脱タップが誘発しうるページ送りを保存しないためのガード
   #lastRelayoutAt = 0      // 直近の再レイアウト(bibi:resized/laid-out)時刻。直後のページ変化は再固定が戻すので保存しない
   #bookId = null           // この本の dc:identifier(=Bibi の A.ID)。localStorage の位置キー BibiBiscuits…#<A.ID> を本ごとに一意特定するため
+  #search = null           // 本文検索(ヘッダの検索ボタンで開くオーバーレイ。bookSearch.js)
 
   constructor({ onBack, onError } = {}) {
     this.#onBack = onBack
@@ -99,6 +103,8 @@ export class BibiReader {
     // 本の dc:identifier(=Bibi の A.ID)を取得しておく。localStorage の位置キーを本ごとに一意特定するため。
     // 非同期だが最初の保存(ページ送り時)には十分間に合う。失敗時は #readLocator が安全側にフォールバック。
     getBookFile(record.id).then((file) => extractIdentifier(file)).then((id) => { this.#bookId = id || null }).catch(() => {})
+    // 本文検索(本ごとに作り直す。destroy() 済みなのでここで新規作成)
+    this.#search = new BookSearch({ getIframe: () => this.#iframe })
     const f = document.createElement('iframe')
     f.className = 'bibi-frame'
     f.setAttribute('allow', 'fullscreen')
@@ -379,8 +385,10 @@ export class BibiReader {
       const st = doc.createElement('style')
       st.id = 'bibi-app-button-style'
       st.textContent =
-        '.bibi-icon-to-library{display:-webkit-box;display:flex;-webkit-box-pack:center;justify-content:center;-webkit-box-align:center;align-items:center;width:100%;height:100%;text-decoration:none}' +
-        '.bibi-icon-to-library:before{font:22px/1 "Material Icons";-webkit-font-feature-settings:"liga";font-feature-settings:"liga";text-transform:none;-webkit-font-smoothing:antialiased;content:"arrow_back"}' +
+        '.bibi-icon-to-library,.bibi-icon-search{display:-webkit-box;display:flex;-webkit-box-pack:center;justify-content:center;-webkit-box-align:center;align-items:center;width:100%;height:100%;text-decoration:none}' +
+        '.bibi-icon-to-library:before,.bibi-icon-search:before{font:22px/1 "Material Icons";-webkit-font-feature-settings:"liga";font-feature-settings:"liga";text-transform:none;-webkit-font-smoothing:antialiased}' +
+        '.bibi-icon-to-library:before{content:"arrow_back"}' +
+        '.bibi-icon-search:before{content:"search"}' +
         '.bibi-app-single-row{display:block;width:100%;box-sizing:border-box;padding:14px 16px;margin-top:6px;border-top:1px solid rgba(127,127,127,.3);font-size:14px;line-height:1.4;text-align:center;cursor:pointer;color:inherit}' +
         '.bibi-app-single-row small{display:block;margin-top:3px;font-size:11px;opacity:.65}' +
         '.bibi-app-single-row:active{background:rgba(127,127,127,.18)}' +
@@ -423,6 +431,10 @@ export class BibiReader {
     // このボタンは左上=Bibi の左フリッパ(次ページ)ゾーンと重なり、タップが「ページ送り」も
     // 誘発しうる(実機 iOS で観測)。離脱フラグを立て、その+1を保存しない(#readAndSaveProgress)。
     ul.appendChild(makeBtn('bibi-button-to-library', 'bibi-icon-to-library', 'ライブラリ', () => { this.#leaving = true; this.#onBack?.() }))
+    // 「本文検索」はヘッダ右群(設定ボタン等の並び)の先頭へ。タップで親側のオーバーレイを開く。
+    // 右群が見つからないビルド差異時は左群(ライブラリの隣)へフォールバック。
+    const ulR = doc.querySelector('#bibi-menu-r ul') || ul
+    ulR.insertBefore(makeBtn('bibi-button-search', 'bibi-icon-search', '本文検索', () => this.#search?.open()), ulR.firstChild)
     this.#injectTitle(doc)
     this.#injectSinglePageRow(doc)
     this.#setupPageSlide(doc)
@@ -547,6 +559,7 @@ export class BibiReader {
   destroy() {
     this.#clearPoll()
     this.#stopResizeFollow()
+    if (this.#search) { this.#search.destroy(); this.#search = null } // 検索オーバーレイ/ハイライトを破棄
     if (this.#restoreTimer) { clearTimeout(this.#restoreTimer); this.#restoreTimer = null } // 復元待ち中の離脱は復元しない
     this.#endRepin() // 再固定リスナ/タイマーを解除
     this.#teardownProgress() // iframe 破棄前に最終保存＋リスナ解除(復元前なら #restored ガードで保存しない)

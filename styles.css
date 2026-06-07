@@ -299,6 +299,91 @@ html.reading, html.reading body { background: #fff; }
 }
 .reader-escape:active { background: rgba(0, 0, 0, 0.75); }
 
+/* ============ 読書中の本文検索(ヘッダの検索ボタンで開くオーバーレイ。bookSearch.js が生成) ============ */
+.reader-search {
+  position: absolute;
+  inset: 0;
+  z-index: 35; /* .reader-escape(40)より下、.toast(30)より上 */
+  display: flex;
+  flex-direction: column;
+  background: rgba(255, 255, 255, 0.98); /* リーダー(白)に合わせたライト配色 */
+  color: #222;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+}
+.reader-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+}
+.reader-search-close {
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: #555;
+  font-size: 24px;
+  line-height: 1;
+}
+.reader-search-close:active { background: rgba(0, 0, 0, 0.08); }
+.reader-search-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 16px; /* iOS のフォーカス時自動ズームを避ける下限 */
+  color: #222;
+  background: rgba(0, 0, 0, 0.06);
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  border-radius: 10px;
+  padding: 9px 12px;
+  -webkit-user-select: text; /* body が user-select:none のため明示 */
+  user-select: text;
+}
+.reader-search-input:focus { outline: none; border-color: var(--accent); }
+.reader-search-go {
+  flex: 0 0 auto;
+  border: none;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  padding: 10px 16px;
+}
+.reader-search-go:active { opacity: 0.8; }
+.reader-search-status { padding: 8px 16px; font-size: 13px; color: #666; }
+.reader-search-list {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  margin: 0;
+  padding: 0 0 calc(env(safe-area-inset-bottom) + 16px);
+  list-style: none;
+}
+.reader-search-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  padding: 12px 16px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #222;
+}
+.reader-search-item:active { background: rgba(0, 0, 0, 0.06); }
+.reader-search-page { flex: 0 0 auto; min-width: 3.4em; padding-top: 1px; font-size: 12px; color: #888; }
+.reader-search-snippet { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.reader-search-snippet b { font-weight: 700; background: #ffe9a8; border-radius: 3px; }
+
 /* ============ バージョン表示(ライブラリ下部) ============ */
 .app-version {
   font-size: 11px;
