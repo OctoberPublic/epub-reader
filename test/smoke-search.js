@@ -121,6 +121,14 @@ const main = async () => {
   })
   ok('ヒットがハイライト登録される(対応環境)', !hl.supported || hl.set, JSON.stringify(hl))
 
+  // 半角/全角を区別しない(NFKD 畳み込み)
+  const z1 = await search(page, 'ページ４の段落７') // 全角数字 → 元は半角 4/7
+  ok('全角数字の検索が半角の本文に一致する', z1.count === 1 && /1件/.test(z1.status), JSON.stringify(z1))
+  const z2 = await search(page, 'ｐａｇｅ　４') // 全角英字(小文字)+全角スペース → 元は「PAGE 4」
+  ok('全角英字+全角スペースが半角の本文に一致する(大小も不問)', z2.count === 1 && /1件/.test(z2.status), JSON.stringify(z2))
+  const z3 = await search(page, 'ﾍﾟｰｼﾞ4の段落7') // 半角カナ(ﾍ+ﾟの合成) → 元は「ページ4の段落7」
+  ok('半角カナ(半濁点つき)が全角カナの本文に一致する', z3.count === 1 && /1件/.test(z3.status), JSON.stringify(z3))
+
   // 見つからない語句
   const r3 = await search(page, 'この語句は存在しないはず')
   ok('見つからない語句は0件表示', r3.count === 0 && /見つかりません/.test(r3.status), JSON.stringify(r3))

@@ -4,7 +4,12 @@
 // するので、親からその本文テキストを直接走査して検索する(EPUB の再解凍もエンジン改造も不要)。
 // - ルビの読み(rt/rp)は本文から除外して連結する。<ruby>漢<rt>かん</rt></ruby><ruby>字<rt>じ</rt></ruby>
 //   のような並びでも「漢字…」の連続文字列として一致する。段落境界には区切り(\n)を挟み、
-//   段落をまたぐ誤一致を防ぐ。英字は大文字小文字を区別しない(半角/全角とも。文字数を変えない畳み込み)。
+//   段落をまたぐ誤一致を防ぐ。
+// - 半角/全角と英字の大小は区別しない: 1文字ずつ NFKD 正規化+小文字化した「畳み込み文字列」で照合する
+//   (ＡＢＣ１２３！⇄ABC123!、ｶﾀｶﾅ⇄カタカナ、ﾊﾟ⇄パ、全角スペース⇄半角)。ひらがな⇄カタカナは混同しない。
+//   NFKD は文字数が変わりうる(ガ→カ+結合濁点 等)ので、畳み込み後→元テキストの位置対応表(idx)を持ち、
+//   一致範囲を元の文字列位置へ逆変換して Range/スニペットを作る。「かき」が「かぎ」(=かき+濁点)の途中に
+//   部分一致する類いは、一致の端が元の1文字の途中に落ちたら棄却する境界チェックで防ぐ。
 // - 一致箇所へのジャンプは focus-on {ItemIndex, PageIndexInItem}(CFI ナビと同じ Bibi のコマンドバス)。
 //   ページ番号は一致 Range の座標を item 内のページ区画(span.page、flex で等分タイル)に幾何で当てて求める。
 //   要素ジャンプ(ElementSelector)だと複数ページにまたがる長い段落で「段落の先頭ページ」へ寄ってしまうため、
@@ -22,8 +27,35 @@ const SKIP_TAGS = new Set(['RT', 'RP', 'SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE'
 // 段落境界とみなすブロック要素(これが変わったら区切りを挟む)
 const BLOCK_RE = /^(P|DIV|H[1-6]|LI|UL|OL|DL|DT|DD|TABLE|THEAD|TBODY|TFOOT|TR|TD|TH|CAPTION|SECTION|ARTICLE|ASIDE|HEADER|FOOTER|FIGURE|FIGCAPTION|BLOCKQUOTE|PRE|HR|NAV|MAIN|ADDRESS|BODY)$/
 
-// 大文字→小文字の畳み込み(半角 A-Z / 全角 Ａ-Ｚ)。1文字→1文字なのでインデックスがずれない。
-const fold = (s) => s.replace(/[A-ZＡ-Ｚ]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 32))
+// 1文字分の畳み込み: NFKD 正規化(全角英数記号→半角、半角カナ→全角カナ、濁点分解 等)+小文字化。
+// 結果は0〜複数文字になりうる。本は同じ文字が大量に出るのでキャッシュする(モジュール内で共有)。
+const foldCache = new Map()
+const foldChar = (ch) => {
+  let f = foldCache.get(ch)
+  if (f === undefined) {
+    try { f = ch.normalize('NFKD') } catch { f = ch } // 不正なサロゲート等はそのまま
+    f = f.toLowerCase()
+    foldCache.set(ch, f)
+  }
+  return f
+}
+
+// 文字列全体の畳み込み。idx は「畳み込み後の各文字 → 元のコードユニット位置」の対応表で、
+// 末尾に番兵(元の文字列長)を1つ置く。一致範囲 [fa,fb) の元範囲は [idx[fa], idx[fb])。
+// idx[k]===idx[k-1] なら k は「元の1文字が複数文字に分解された途中」(境界チェックに使う)。
+const foldWithMap = (s) => {
+  let folded = ''
+  const idx = []
+  let i = 0
+  for (const ch of s) { // コードポイント単位(サロゲートペアを割らない)
+    const f = foldChar(ch)
+    for (let j = 0; j < f.length; j++) idx.push(i)
+    folded += f
+    i += ch.length
+  }
+  idx.push(s.length) // 番兵
+  return { folded, idx }
+}
 
 export class BookSearch {
   #getIframe          // () => Bibi の iframe 要素(なければ null)
@@ -116,7 +148,8 @@ export class BookSearch {
     const items = this.#items()
     if (!items.length) { this.#status.textContent = '本の読み込みが終わっていません。少し待ってからお試しください' ; return }
 
-    const needle = fold(q)
+    const needle = foldWithMap(q).folded
+    if (!needle) { this.#status.textContent = '' ; return }
     let capped = false
     for (const ifr of items) {
       if (this.#results.length >= MAX_RESULTS) { capped = true; break }
@@ -125,19 +158,26 @@ export class BookSearch {
       if (!doc || !doc.body) continue
       const { text, segs } = this.#collect(doc)
       if (!text) continue
-      const hay = fold(text)
+      const { folded: hay, idx } = foldWithMap(text)
       const ranges = []
       let from = 0
       while (this.#results.length < MAX_RESULTS) {
-        const at = hay.indexOf(needle, from)
-        if (at < 0) break
-        from = at + Math.max(1, needle.length)
-        const range = this.#toRange(doc, segs, at, at + needle.length)
+        const fa = hay.indexOf(needle, from)
+        if (fa < 0) break
+        const fb = fa + needle.length
+        from = fa + Math.max(1, needle.length)
+        // 一致の端が「元の1文字の分解途中」に落ちたら棄却(例:「かき」が「かぎ」=かき+結合濁点 の頭に当たる)
+        if (fa > 0 && idx[fa] === idx[fa - 1]) continue
+        if (fb < hay.length && idx[fb] === idx[fb - 1]) continue
+        // 畳み込み空間 → 元テキストの範囲へ(idx 末尾には番兵があるので fb==hay.length でも安全)
+        const at = idx[fa]
+        const end = idx[fb]
+        const range = this.#toRange(doc, segs, at, end)
         if (!range) continue
         // 結果リスト用の前後文脈(段落区切りはスペースに均す)
         const before = text.slice(Math.max(0, at - SNIPPET_AROUND), at).replace(/\s+/g, ' ')
-        const hit = text.slice(at, at + needle.length).replace(/\s+/g, ' ')
-        const after = text.slice(at + needle.length, at + needle.length + SNIPPET_AROUND).replace(/\s+/g, ' ')
+        const hit = text.slice(at, end).replace(/\s+/g, ' ')
+        const after = text.slice(end, end + SNIPPET_AROUND).replace(/\s+/g, ' ')
         this.#results.push({ ifr, itemIndex: ifr.Index, range, before, hit, after })
         ranges.push(range)
       }
