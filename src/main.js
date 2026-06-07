@@ -15,7 +15,7 @@ import { APP_VERSION } from './version.js'
 const $ = (id) => document.getElementById(id)
 
 const library = new LibraryView({ onOpen: (id) => openBook(id), onError: (msg) => toast(msg) })
-const reader = new BibiReader({ onBack: () => goLibrary(), onError: (msg) => toast(msg) })
+const reader = new BibiReader({ onBack: () => goLibrary(), onError: (msg) => toast(msg), onNotify: (msg) => toast(msg) })
 const syncSettings = new SyncSettingsView()
 
 // ---- 画面切り替え ----

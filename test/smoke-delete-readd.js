@@ -17,7 +17,7 @@ const cardCount = (page) => page.evaluate(() => document.querySelectorAll('.book
 // クリーンな状態にする。deleteDatabase はアプリが DB 接続を開いている間ブロックされる
 // (onblocked のまま success が来ない)ため使わず、別接続で各ストアを clear する。
 const clearStores = (page) => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('epub-reader', 1)
+  const req = indexedDB.open('epub-reader')
   req.onupgradeneeded = () => {
     const db = req.result
     if (!db.objectStoreNames.contains('books')) db.createObjectStore('books', { keyPath: 'id' })
@@ -36,7 +36,7 @@ const clearStores = (page) => page.evaluate(() => new Promise((resolve) => {
 
 // IndexedDB の中身(books/files)を覗く。
 const dbState = (page) => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('epub-reader', 1)
+  const req = indexedDB.open('epub-reader')
   req.onsuccess = () => {
     const db = req.result
     const tx = db.transaction(['books', 'files'], 'readonly')
@@ -52,7 +52,7 @@ const dbState = (page) => page.evaluate(() => new Promise((resolve) => {
 
 // 本体 Blob だけを全消し(=メタだけ残る「壊れた本」を作る)。
 const orphanAllFiles = (page) => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('epub-reader', 1)
+  const req = indexedDB.open('epub-reader')
   req.onsuccess = () => {
     const db = req.result
     const tx = db.transaction('files', 'readwrite')

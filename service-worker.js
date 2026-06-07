@@ -7,14 +7,16 @@
 // (= 反映は次回起動。デプロイ後の目視確認は「×2 再起動」で行う)。
 // 書籍本体は IndexedDB にあり、仮想URL /bibi-book/<id>.epub で配信する(キャッシュ対象外)。
 
-const CACHE = 'epub-reader-v41'
+const CACHE = 'epub-reader-v42'
 const NET_TIMEOUT_MS = 4000 // ネットワーク取得のタイムアウト(固着防止)
 
 // 保存済み EPUB を仮想URL /bibi-book/<id>.epub で配信する(Bibi に .epub URL として渡すため)。
 // Bibi は zip の Central Directory を HTTP Range で読むので、Range 要求に対応する。
 function getStoredEpub(id) {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open('epub-reader', 1)
+    // バージョンを指定しない(現行バージョンで開く)。固定値だと DB のスキーマ更新時に
+    // VersionError で本が配信できなくなるため。
+    const req = indexedDB.open('epub-reader')
     req.onsuccess = () => {
       try {
         const db = req.result
@@ -107,6 +109,7 @@ const CORE = [
   './src/library/importBook.js',
   './src/reader/bibiReader.js',
   './src/reader/bookSearch.js',
+  './src/reader/bookClip.js',
   './src/sync/identity.js',
   './src/sync/githubClient.js',
   './src/sync/merge.js',
@@ -115,6 +118,7 @@ const CORE = [
   './src/storage/db.js',
   './src/storage/metadata.js',
   './src/storage/books.js',
+  './src/storage/clips.js',
   './src/storage/persist.js',
   './src/util/blob.js',
   './src/util/epubMeta.js',

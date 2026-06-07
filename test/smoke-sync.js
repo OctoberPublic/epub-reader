@@ -12,30 +12,34 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 const results = []
 const ok = (name, cond, extra = '') => { results.push({ name, pass: !!cond }); console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${extra ? '  — ' + extra : ''}`) }
 
-// ---- メモリ上の偽 GitHub(両コンテキストで共有) ----
-const remote = { content: null, sha: 0 }
+// ---- メモリ上の偽 GitHub(両コンテキストで共有。パス→{content,sha} の汎用ファイル置き場) ----
+const repoFiles = new Map() // 'library.json' / 'books/<key>/clips.json' など
 const toB64 = (s) => Buffer.from(s, 'utf8').toString('base64')
 const fromB64 = (s) => Buffer.from(s, 'base64').toString('utf8')
-const remoteJson = () => (remote.content == null ? null : JSON.parse(remote.content))
+const remoteJson = (path = 'library.json') => (repoFiles.has(path) ? JSON.parse(repoFiles.get(path).content) : null)
 
 async function mockGithub(context) {
   await context.route('https://api.github.com/**', async (route) => {
     const req = route.request()
     const url = req.url().split('?')[0]
     const reply = (status, body) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
-    if (req.method() === 'GET' && url.includes('/contents/library.json')) {
-      if (remote.content == null) return reply(404, { message: 'Not Found' })
-      return reply(200, { content: toB64(remote.content), sha: String(remote.sha) })
+    const m = url.match(/\/contents\/(.+)$/)
+    if (req.method() === 'GET' && m) {
+      const f = repoFiles.get(decodeURIComponent(m[1]))
+      if (!f) return reply(404, { message: 'Not Found' })
+      return reply(200, { content: toB64(f.content), sha: String(f.sha) })
     }
-    if (req.method() === 'PUT' && url.includes('/contents/library.json')) {
+    if (req.method() === 'PUT' && m) {
+      const path = decodeURIComponent(m[1])
+      const f = repoFiles.get(path)
       const body = JSON.parse(req.postData() || '{}')
-      const expected = remote.content == null ? undefined : String(remote.sha)
+      const expected = f ? String(f.sha) : undefined
       if (expected !== body.sha && !(expected === undefined && body.sha === undefined)) {
         return reply(409, { message: 'sha mismatch' }) // 楽観ロック(クライアントの再試行を検証)
       }
-      remote.content = fromB64(body.content || '')
-      remote.sha++
-      return reply(200, { content: { sha: String(remote.sha) } })
+      const sha = (f?.sha ?? 0) + 1
+      repoFiles.set(path, { content: fromB64(body.content || ''), sha })
+      return reply(200, { content: { sha: String(sha) } })
     }
     if (req.method() === 'GET' && /\/repos\/[^/]+\/[^/]+$/.test(url)) {
       return reply(200, { private: true, default_branch: 'main' }) // 接続テスト用
@@ -52,7 +56,7 @@ async function mockGithub(context) {
 
 // ---- ページ内ヘルパ ----
 const clearStores = (page) => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('epub-reader', 1)
+  const req = indexedDB.open('epub-reader')
   req.onupgradeneeded = () => {
     const db = req.result
     if (!db.objectStoreNames.contains('books')) db.createObjectStore('books', { keyPath: 'id' })
@@ -70,7 +74,7 @@ const clearStores = (page) => page.evaluate(() => new Promise((resolve) => {
 }))
 
 const getBook = (page) => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('epub-reader', 1)
+  const req = indexedDB.open('epub-reader')
   req.onsuccess = () => {
     const db = req.result
     const tx = db.transaction('books', 'readonly')
@@ -157,6 +161,31 @@ const main = async () => {
   ok('A: B の進捗に追従する', bookA2?.cfi === JSON.stringify({ iipp: 1.8 }) && bookA2?.fraction === 0.6, `cfi=${bookA2?.cfi}`)
   ok('A: B の読みたい本フラグが反映される', bookA2?.wantToRead === true)
   ok('A: お気に入りは維持される', bookA2?.favorite === true)
+
+  // ---- クリップ: A で記録 → push → books/<key>/clips.json に載る ----
+  const addClipOn = (page, clip) => page.evaluate(async (c) => {
+    const clips = await import('/src/storage/clips.js')
+    const sync = await import('/src/sync/sync.js')
+    const meta = await import('/src/storage/metadata.js')
+    const book = (await meta.getAllBooks())[0]
+    await clips.addClip({ ...c, stableKey: book.stableKey, title: book.title, author: book.author, createdAt: Date.now() })
+    sync.markClipsDirty(book.stableKey)
+  }, clip)
+
+  await addClipOn(A.page, { id: 'clip-a-1', text: '吾輩は猫である。', chapter: '第1章 はじめに', page: 3, itemIndex: 0 })
+  await doSync(A.page)
+  const clipsPath = [...repoFiles.keys()].find((p) => /^books\/.+\/clips\.json$/.test(p))
+  ok('clips: books/<key>/clips.json が作られる', !!clipsPath, `paths=${[...repoFiles.keys()].join(', ')}`)
+  const clips1 = clipsPath ? remoteJson(clipsPath) : null
+  ok('clips: 記録した文と章・ページが載る', clips1?.clips?.some((c) => c.text === '吾輩は猫である。' && c.chapter === '第1章 はじめに' && c.page === 3))
+  ok('clips: 本のタイトルが載る(md 出力用)', clips1?.title === 'テスト書籍')
+
+  // ---- クリップ: B でも記録 → 和集合で両端末分が残る ----
+  await addClipOn(B.page, { id: 'clip-b-1', text: '名前はまだ無い。', chapter: '第2章 つづき', page: 12, itemIndex: 1 })
+  await doSync(B.page)
+  const clips2 = clipsPath ? remoteJson(clipsPath) : null
+  const ids = (clips2?.clips ?? []).map((c) => c.id)
+  ok('clips: 両端末のクリップが和集合で残る', ids.includes('clip-a-1') && ids.includes('clip-b-1'), `ids=${ids.join(', ')}`)
 
   await browser.close()
   const failed = results.filter((r) => !r.pass)

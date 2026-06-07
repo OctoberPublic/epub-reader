@@ -12,13 +12,13 @@ const results = []
 const ok = (name, cond, extra = '') => { results.push({ name, pass: !!cond }); console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${extra ? '  — ' + extra : ''}`) }
 
 const clearStores = (page) => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('epub-reader', 1)
+  const req = indexedDB.open('epub-reader')
   req.onupgradeneeded = () => { const db = req.result; if (!db.objectStoreNames.contains('books')) db.createObjectStore('books', { keyPath: 'id' }); if (!db.objectStoreNames.contains('files')) db.createObjectStore('files', { keyPath: 'id' }) }
   req.onsuccess = () => { const db = req.result; const names = [...db.objectStoreNames]; const tx = db.transaction(names, 'readwrite'); for (const n of names) tx.objectStore(n).clear(); tx.oncomplete = () => { db.close(); resolve(true) } }
   req.onerror = () => resolve(false)
 }))
 const books = (page) => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('epub-reader', 1)
+  const req = indexedDB.open('epub-reader')
   req.onsuccess = () => { const db = req.result; const tx = db.transaction('books', 'readonly'); const all = tx.objectStore('books').getAll(); tx.oncomplete = () => resolve(all.result.map((b) => ({ fraction: b.fraction }))) }
   req.onerror = () => resolve([])
 }))

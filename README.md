@@ -14,6 +14,8 @@ EPUB 描画には [Bibi](https://github.com/satorumurmur/bibi)(MIT)を使用し�
 - 書籍データは端末の **IndexedDB** にローカル保存(サーバには送らない)。オフライン閲覧可
 - **iPhone/iPad 間の状態同期**(任意): 読書進捗・お気に入り・読みたい本を、自分の GitHub
   プライベートリポジトリ経由で同期(下記「端末間の同期」)。EPUB 本体は同期しない
+- **読書クリップ**(任意): 読書中に選択した文を、章名・ページ番号つきで記録。同期リポジトリ
+  経由で PC のスクリプトが Obsidian 用 md を生成(下記「読書クリップ(Obsidian 連携)」)
 
 ## ディレクトリ構成
 
@@ -32,6 +34,7 @@ src/
   sync/                   端末間同期(GitHub Contents API・LWWマージ・設定パネル)
   util/                   メタデータ抽出(epubMeta)+ 最小ZIP読取(zipReader)
   version.js              バージョン表示文字列
+tools/export-clips.mjs    読書クリップ → Obsidian 用 md の書き出し(PC で実行)
 test/                     E2E スモークテスト(Playwright)+ devserver(Range対応)
 ```
 
@@ -69,11 +72,13 @@ node test/smoke-import.js       # 取り込み/重複スキップ/フィルタ
 node test/smoke-bibi.js         # 縦書きの右→左横めくり
 node test/smoke-bibi-fxl.js     # 固定レイアウト昇格・見開き・SVG正規化
 node test/smoke-bibi-spread.js  # 見開きの単独ページ指定・メニュー統合ボタン
-node test/smoke-sync.js         # 端末間同期(偽 GitHub で 2 端末の往復)
+node test/smoke-sync.js         # 端末間同期(偽 GitHub で 2 端末の往復+クリップ push)
+node test/smoke-clip.js         # 読書クリップ(選択→記録→章名/ページ保存)
 
 # 単体テスト(ブラウザ・devserver 不要)
 node test/unit-merge.js         # 同期マージ(LWW)の純ロジック
 node test/unit-github.js        # GitHub クライアント(base64/競合リトライ)
+node test/unit-clips.js         # クリップの和集合マージ+md 組み立て
 ```
 
 ## iPhone / iPad で使う(Mac 不要)
@@ -118,6 +123,35 @@ iPad で開くと同じ位置から再開)。同期データは**自分の GitHu
 > トークンは端末内(localStorage)にのみ保存されます。本アプリは外部スクリプトを読み込まない
 > 単一オリジンの PWA で、トークンの権限も同期用リポジトリの Contents に限定されるため、
 > 漏えいリスクは限定的です。
+
+## 読書クリップ(Obsidian 連携)
+
+読書中に気になった文を選択してヘッダの **記録ボタン(引用符「”」のアイコン)** を押すと、選択した文が
+**章名・通しページ番号つき**で記録されます(iOS でメニューを出した時に選択が解除されても、
+直前の選択を控えているのでそのまま記録できます)。記録は端末内(IndexedDB)に保存され、
+同期設定済みなら同期リポジトリの `books/<本のキー>/clips.json` へ自動で push されます
+(両端末の記録は和集合で合流)。
+
+PC 側で `tools/export-clips.mjs` を実行すると、リポジトリを pull して本ごとの md を
+Obsidian の vault フォルダ(iCloud)へ書き出します。md は毎回 clips.json から作り直される
+ため、**md 側を編集しても次回実行で上書きされます**(書き足したい場合は別ノートへコピー)。
+
+セットアップ(PC・初回のみ):
+
+```powershell
+# 1. 同期リポジトリを clone(初回のみ。認証は普段の git と同じ)
+git clone https://github.com/<ユーザー名>/epub-reader-sync C:\Users\takoy\Documents\epub-reader-sync
+
+# 2. 手動で書き出してみる(pull → md 生成)
+node tools\export-clips.mjs C:\Users\takoy\Documents\epub-reader-sync "C:\Users\takoy\iCloudDrive\iCloud~md~obsidian\knowledge\読書クリップ"
+
+# 3. タスクスケジューラに登録(1時間ごとに自動実行。管理者権限は不要)
+schtasks /Create /TN "EPUB Reader Clips" /SC HOURLY /F /TR "\"C:\Program Files\nodejs\node.exe\" \"C:\Users\takoy\Documents\EPUB_Reader\tools\export-clips.mjs\" \"C:\Users\takoy\Documents\epub-reader-sync\" \"C:\Users\takoy\iCloudDrive\iCloud~md~obsidian\knowledge\読書クリップ\""
+```
+
+> 反映の流れ: iPhone/iPad で記録 → GitHub → (PC が起動している時に)スクリプトが pull して
+> md 生成 → iCloud が各端末へ配信 → Obsidian で閲覧。PC を経由するため、記録から Obsidian で
+> 見えるまでにはタイムラグがあります(即時性が必要なら PC で手動実行)。
 
 ### ストレージ永続化について
 iOS は無操作が続くとサイトデータを削除することがありますが、**ホーム画面に追加した PWA は対象外**になりやすく、本アプリは起動時に `navigator.storage.persist()` で永続化を要求します。万一消えても、元の EPUB を再取り込みすれば復旧できます(原本は手元に残す前提)。

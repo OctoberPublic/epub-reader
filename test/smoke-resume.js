@@ -53,7 +53,7 @@ function makeEpub() {
 }
 
 const clearStores = (page) => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('epub-reader', 1)
+  const req = indexedDB.open('epub-reader')
   req.onupgradeneeded = () => { const db = req.result
     if (!db.objectStoreNames.contains('books')) db.createObjectStore('books', { keyPath: 'id' })
     if (!db.objectStoreNames.contains('files')) db.createObjectStore('files', { keyPath: 'id' }) }
@@ -62,12 +62,12 @@ const clearStores = (page) => page.evaluate(() => new Promise((resolve) => {
     tx.oncomplete = () => { db.close(); resolve(true) }; tx.onerror = () => { db.close(); resolve(false) } }
   req.onerror = () => resolve(false) }))
 const getCfi = (page) => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('epub-reader', 1)
+  const req = indexedDB.open('epub-reader')
   req.onsuccess = () => { const db = req.result; const tx = db.transaction('books', 'readonly')
     const all = tx.objectStore('books').getAll(); tx.oncomplete = () => resolve(all.result[0] ? all.result[0].cfi : null) }
   req.onerror = () => resolve(null) }))
 const setCfi = (page, cfi) => page.evaluate((cfi) => new Promise((resolve) => {
-  const req = indexedDB.open('epub-reader', 1)
+  const req = indexedDB.open('epub-reader')
   req.onsuccess = () => { const db = req.result; const tx = db.transaction('books', 'readwrite')
     const s = tx.objectStore('books'); const g = s.getAll()
     g.onsuccess = () => { const b = g.result[0]; if (b) { b.cfi = cfi; s.put(b) } }

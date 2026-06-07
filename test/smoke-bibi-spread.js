@@ -12,13 +12,13 @@ const results = []
 const ok = (name, cond, extra = '') => { results.push({ name, pass: !!cond }); console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${extra ? '  — ' + extra : ''}`) }
 
 const setSingles = (page, singles) => page.evaluate((sg) => new Promise((resolve, reject) => {
-  const req = indexedDB.open('epub-reader', 1)
+  const req = indexedDB.open('epub-reader')
   req.onsuccess = () => { const db = req.result; const tx = db.transaction('books', 'readwrite'); const os = tx.objectStore('books'); const g = os.getAll(); g.onsuccess = () => { const all = g.result; if (!all.length) { resolve(false); return } const rec = all[0]; rec.singlePages = sg; os.put(rec); tx.oncomplete = () => resolve(true) }; g.onerror = () => reject(g.error) }
   req.onerror = () => reject(req.error)
 }), singles)
 
 const getSingles = (page) => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('epub-reader', 1)
+  const req = indexedDB.open('epub-reader')
   req.onsuccess = () => { const db = req.result; const g = db.transaction('books', 'readonly').objectStore('books').getAll(); g.onsuccess = () => resolve((g.result[0] || {}).singlePages || null); g.onerror = () => resolve(null) }
   req.onerror = () => resolve(null)
 }))

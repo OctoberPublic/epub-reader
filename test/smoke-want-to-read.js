@@ -11,7 +11,7 @@ const ok = (name, cond, extra = '') => { results.push({ name, pass: !!cond }); c
 const cardCount = (page) => page.evaluate(() => document.querySelectorAll('.book-card').length)
 
 const clearStores = (page) => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('epub-reader', 1)
+  const req = indexedDB.open('epub-reader')
   req.onupgradeneeded = () => {
     const db = req.result
     if (!db.objectStoreNames.contains('books')) db.createObjectStore('books', { keyPath: 'id' })
@@ -29,7 +29,7 @@ const clearStores = (page) => page.evaluate(() => new Promise((resolve) => {
 }))
 
 const wantFlag = (page) => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('epub-reader', 1)
+  const req = indexedDB.open('epub-reader')
   req.onsuccess = () => {
     const db = req.result
     const tx = db.transaction('books', 'readonly')

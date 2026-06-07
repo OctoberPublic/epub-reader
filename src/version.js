@@ -1,3 +1,3 @@
 // アプリのバージョン表示用。変更をデプロイするたびに更新する。
 // 設定パネル下部に表示し、iPad で「新版が反映されたか」を目視確認できるようにする。
-export const APP_VERSION = '2026-06-08 sync'
+export const APP_VERSION = '2026-06-08 clips'

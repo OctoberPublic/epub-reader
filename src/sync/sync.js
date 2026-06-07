@@ -7,8 +7,10 @@
 // 代わりに起動時の sync() がローカルの新しい updatedAt を push するので、取りこぼしは次回起動で回収。
 
 import { getAllBooks, applyRemoteFields } from '../storage/metadata.js'
+import { getClipsFor } from '../storage/clips.js'
 import { GithubClient } from './githubClient.js'
-import { mergeLibrary } from './merge.js'
+import { mergeLibrary, mergeClips } from './merge.js'
+import { stableKeySafe } from './identity.js'
 
 const LS = {
   token: 'sync.token',
@@ -18,6 +20,7 @@ const LS = {
   deviceId: 'sync.deviceId',
   lastSyncAt: 'sync.lastSyncAt',
   lastError: 'sync.lastError',
+  dirtyClips: 'sync.dirtyClips', // クリップの push 待ちの本(stableKey の配列。成功するまで保持)
 }
 const PUSH_DEBOUNCE_MS = 6000 // 状態変更(お気に入り等)の連打をまとめてから push するまでの待ち
 
@@ -91,6 +94,39 @@ export function makeClient(settings = getSettings()) {
   return new GithubClient(settings)
 }
 
+// ---- クリップの push 待ち管理 ----
+// クリップ追加時に本(stableKey)単位で「push 待ち」を localStorage に控える。次の sync() が
+// books/<key>/clips.json へ和集合マージで push し、成功した本から控えを消す(失敗時は残って再試行)。
+function readDirtyClips() {
+  try {
+    const a = JSON.parse(lsGet(LS.dirtyClips) || '[]')
+    return Array.isArray(a) ? a.filter((k) => typeof k === 'string') : []
+  } catch { return [] }
+}
+function writeDirtyClips(keys) {
+  lsSet(LS.dirtyClips, keys.length ? JSON.stringify(keys) : null)
+}
+export function markClipsDirty(stableKey) {
+  if (!stableKey) return
+  const keys = readDirtyClips()
+  if (!keys.includes(stableKey)) { keys.push(stableKey); writeDirtyClips(keys) }
+}
+
+// push 待ちの本のクリップをリポジトリへ反映する(sync() から呼ぶ)。
+async function pushDirtyClips(client, localBooks) {
+  for (const key of readDirtyClips()) {
+    const clips = (await getClipsFor(key))
+      .map(({ id, text, chapter, page, itemIndex, createdAt }) => ({ id, text, chapter, page, itemIndex, createdAt }))
+    const book = localBooks.find((b) => b.stableKey === key)
+    await client.readModifyWrite(
+      `books/${stableKeySafe(key)}/clips.json`,
+      (remote) => mergeClips(remote, { stableKey: key, title: book?.title ?? '', author: book?.author ?? '', clips }),
+      `clips: ${book?.title ?? key}`,
+    )
+    writeDirtyClips(readDirtyClips().filter((k) => k !== key))
+  }
+}
+
 // 同期本体(pull+push)。多重起動は syncing ガードで抑止。
 // 返り値: リモートの方が新しいフィールドがあってローカルへ反映した場合 true。
 export async function sync() {
@@ -112,6 +148,9 @@ export async function sync() {
       await applyRemoteFields(u.stableKey, u.fields)
       appliedCount++
     }
+    // 新しいクリップがある本だけ books/<key>/clips.json へ push(pull はしない=閲覧は
+    // Obsidian 側で行うため。他端末のクリップは和集合マージで JSON 上に保たれる)。
+    await pushDirtyClips(client, localBooks)
     lsSet(LS.lastSyncAt, String(Date.now()))
     lsSet(LS.lastError, null)
   } catch (e) {

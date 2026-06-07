@@ -48,3 +48,21 @@ export function mergeLibrary(remote, localBooks, deviceId, now = Date.now()) {
   const remoteJson = { schemaVersion: 1, updatedAt: now, device: String(deviceId ?? ''), books: remoteBooks }
   return { remoteJson, localUpdates }
 }
+
+// クリップ(books/<stableKeySafe>/clips.json)のマージ(純関数)。クリップは追記専用なので、
+// リモートとローカルの和集合(id で重複排除。同 id はローカル優先)を作成順で並べる。
+// 他端末が付けたクリップもリモート側に残り、消えない。削除・編集は扱わない。
+export function mergeClips(remote, { stableKey, title, author, clips }) {
+  const byId = new Map()
+  const remoteClips = (remote && Array.isArray(remote.clips)) ? remote.clips : []
+  for (const c of remoteClips) if (c && c.id) byId.set(c.id, c)
+  for (const c of clips ?? []) if (c && c.id) byId.set(c.id, c)
+  const merged = [...byId.values()].sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0))
+  return {
+    schemaVersion: 1,
+    stableKey,
+    title: title || remote?.title || '',
+    author: author || remote?.author || '',
+    clips: merged,
+  }
+}

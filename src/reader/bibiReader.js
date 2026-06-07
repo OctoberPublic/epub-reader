@@ -22,6 +22,7 @@ import { putBook, updateProgress, touch } from '../storage/metadata.js'
 import { getBookFile } from '../storage/books.js'
 import { extractIdentifier } from '../util/epubMeta.js'
 import { BookSearch } from './bookSearch.js'
+import { BookClip } from './bookClip.js'
 
 const $ = (id) => document.getElementById(id)
 
@@ -59,10 +60,13 @@ export class BibiReader {
   #lastRelayoutAt = 0      // 直近の再レイアウト(bibi:resized/laid-out)時刻。直後のページ変化は再固定が戻すので保存しない
   #bookId = null           // この本の dc:identifier(=Bibi の A.ID)。localStorage の位置キー BibiBiscuits…#<A.ID> を本ごとに一意特定するため
   #search = null           // 本文検索(ヘッダの検索ボタンで開くオーバーレイ。bookSearch.js)
+  #clip = null             // 選択した文の記録(ヘッダの記録ボタン。bookClip.js)
+  #onNotify                // 操作の結果(記録しました 等)をユーザーへ知らせる(main.js が toast を渡す)
 
-  constructor({ onBack, onError } = {}) {
+  constructor({ onBack, onError, onNotify } = {}) {
     this.#onBack = onBack
     this.#onError = onError
+    this.#onNotify = onNotify
   }
 
   // record: メタレコード({ id, title, singlePages?, ... })。本体は SW が IndexedDB から配信する。
@@ -105,6 +109,8 @@ export class BibiReader {
     getBookFile(record.id).then((file) => extractIdentifier(file)).then((id) => { this.#bookId = id || null }).catch(() => {})
     // 本文検索(本ごとに作り直す。destroy() 済みなのでここで新規作成)
     this.#search = new BookSearch({ getIframe: () => this.#iframe })
+    // 選択した文の記録(クリップ)。selectionchange の購読はロード後に start() する。
+    this.#clip = new BookClip({ getIframe: () => this.#iframe, getRecord: () => this.#record })
     const f = document.createElement('iframe')
     f.className = 'bibi-frame'
     f.setAttribute('allow', 'fullscreen')
@@ -165,6 +171,7 @@ export class BibiReader {
     const esc = $('reader-escape')
     if (esc) esc.hidden = true
     this.#setupProgress() // 本文が出たので読書進捗の購読を開始
+    this.#clip?.start() // 選択の控え(selectionchange)の購読を開始(記録ボタン用)
     this.#scheduleRestore() // 保存済みの位置(IIPP)があれば、レイアウト安定後に正確な位置へ復元
   }
 
@@ -385,10 +392,11 @@ export class BibiReader {
       const st = doc.createElement('style')
       st.id = 'bibi-app-button-style'
       st.textContent =
-        '.bibi-icon-to-library,.bibi-icon-search{display:-webkit-box;display:flex;-webkit-box-pack:center;justify-content:center;-webkit-box-align:center;align-items:center;width:100%;height:100%;text-decoration:none}' +
-        '.bibi-icon-to-library:before,.bibi-icon-search:before{font:22px/1 "Material Icons";-webkit-font-feature-settings:"liga";font-feature-settings:"liga";text-transform:none;-webkit-font-smoothing:antialiased}' +
+        '.bibi-icon-to-library,.bibi-icon-search,.bibi-icon-clip{display:-webkit-box;display:flex;-webkit-box-pack:center;justify-content:center;-webkit-box-align:center;align-items:center;width:100%;height:100%;text-decoration:none}' +
+        '.bibi-icon-to-library:before,.bibi-icon-search:before,.bibi-icon-clip:before{font:22px/1 "Material Icons";-webkit-font-feature-settings:"liga";font-feature-settings:"liga";text-transform:none;-webkit-font-smoothing:antialiased}' +
         '.bibi-icon-to-library:before{content:"arrow_back"}' +
         '.bibi-icon-search:before{content:"search"}' +
+        '.bibi-icon-clip:before{content:"format_quote"}' +
         '.bibi-app-single-row{display:block;width:100%;box-sizing:border-box;padding:14px 16px;margin-top:6px;border-top:1px solid rgba(127,127,127,.3);font-size:14px;line-height:1.4;text-align:center;cursor:pointer;color:inherit}' +
         '.bibi-app-single-row small{display:block;margin-top:3px;font-size:11px;opacity:.65}' +
         '.bibi-app-single-row:active{background:rgba(127,127,127,.18)}' +
@@ -431,13 +439,22 @@ export class BibiReader {
     // このボタンは左上=Bibi の左フリッパ(次ページ)ゾーンと重なり、タップが「ページ送り」も
     // 誘発しうる(実機 iOS で観測)。離脱フラグを立て、その+1を保存しない(#readAndSaveProgress)。
     ul.appendChild(makeBtn('bibi-button-to-library', 'bibi-icon-to-library', 'ライブラリ', () => { this.#leaving = true; this.#onBack?.() }))
-    // 「本文検索」はヘッダ右群(設定ボタン等の並び)の先頭へ。タップで親側のオーバーレイを開く。
+    // 「選択した文を記録」(クリップ)と「本文検索」はヘッダ右群(設定ボタン等の並び)の先頭へ。
     // 右群が見つからないビルド差異時は左群(ライブラリの隣)へフォールバック。
+    // 並び順: [検索][記録][Bibi の既存ボタン…](記録を先に挿入してから検索をその左へ)。
     const ulR = doc.querySelector('#bibi-menu-r ul') || ul
+    ulR.insertBefore(makeBtn('bibi-button-clip', 'bibi-icon-clip', '選択した文を記録', () => this.#recordClip()), ulR.firstChild)
     ulR.insertBefore(makeBtn('bibi-button-search', 'bibi-icon-search', '本文検索', () => this.#search?.open()), ulR.firstChild)
     this.#injectTitle(doc)
     this.#injectSinglePageRow(doc)
     this.#setupPageSlide(doc)
+  }
+
+  // 記録ボタン: 選択中(または直前に選択していた)文字列をクリップとして保存し、結果をトーストで知らせる。
+  async #recordClip() {
+    if (!this.#clip) return
+    const res = await this.#clip.record()
+    this.#onNotify?.(res.message)
   }
 
   // ヘッダ(#bibi-menu)の中央へ「本のタイトル - 著者名」を差し込む。著者名が無ければタイトルのみ。
@@ -561,6 +578,7 @@ export class BibiReader {
     this.#clearPoll()
     this.#stopResizeFollow()
     if (this.#search) { this.#search.destroy(); this.#search = null } // 検索オーバーレイ/ハイライトを破棄
+    if (this.#clip) { this.#clip.destroy(); this.#clip = null } // 選択の控え/購読ポーリングを破棄
     if (this.#restoreTimer) { clearTimeout(this.#restoreTimer); this.#restoreTimer = null } // 復元待ち中の離脱は復元しない
     this.#endRepin() // 再固定リスナ/タイマーを解除
     this.#teardownProgress() // iframe 破棄前に最終保存＋リスナ解除(復元前なら #restored ガードで保存しない)

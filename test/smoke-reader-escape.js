@@ -16,7 +16,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 // クリーンな状態にする。deleteDatabase はアプリが DB 接続を開いている間ブロックされるため、
 // 別接続で各ストアを clear する。
 const clearStores = (page) => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('epub-reader', 1)
+  const req = indexedDB.open('epub-reader')
   req.onupgradeneeded = () => {
     const db = req.result
     if (!db.objectStoreNames.contains('books')) db.createObjectStore('books', { keyPath: 'id' })
@@ -35,7 +35,7 @@ const clearStores = (page) => page.evaluate(() => new Promise((resolve) => {
 
 // 本体 Blob をサイズ>0 のゴミに差し替える(=hasBookFile は通るが Bibi は描画できない)。
 const corruptAllBlobs = (page) => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('epub-reader', 1)
+  const req = indexedDB.open('epub-reader')
   req.onsuccess = () => {
     const db = req.result
     const tx = db.transaction('files', 'readwrite')
@@ -50,7 +50,7 @@ const corruptAllBlobs = (page) => page.evaluate(() => new Promise((resolve) => {
 
 // 本体 Blob を全消し(=メタだけ残る欠落状態)。
 const clearAllBlobs = (page) => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('epub-reader', 1)
+  const req = indexedDB.open('epub-reader')
   req.onsuccess = () => {
     const db = req.result
     const tx = db.transaction('files', 'readwrite')

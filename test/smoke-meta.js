@@ -48,7 +48,7 @@ async function makeEpub({ title, creator, lang, dir }) {
 }
 
 const getRecord = (page) => page.evaluate(() => new Promise((resolve) => {
-  const req = indexedDB.open('epub-reader', 1)
+  const req = indexedDB.open('epub-reader')
   req.onsuccess = () => { const g = req.result.transaction('books', 'readonly').objectStore('books').getAll(); g.onsuccess = () => resolve(g.result[0] || null); g.onerror = () => resolve(null) }
   req.onerror = () => resolve(null)
 }))
