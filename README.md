@@ -143,10 +143,10 @@ Obsidian の vault フォルダ(iCloud)へ書き出します。md は毎回 clip
 git clone https://github.com/<ユーザー名>/epub-reader-sync C:\Users\takoy\Documents\epub-reader-sync
 
 # 2. 手動で書き出してみる(pull → md 生成)
-node tools\export-clips.mjs C:\Users\takoy\Documents\epub-reader-sync "C:\Users\takoy\iCloudDrive\iCloud~md~obsidian\knowledge\読書クリップ"
+node tools\export-clips.mjs C:\Users\takoy\Documents\epub-reader-sync "C:\Users\takoy\iCloudDrive\iCloud~md~obsidian\knowledge\013 読書クリップ"
 
 # 3. タスクスケジューラに登録(1時間ごとに自動実行。管理者権限は不要)
-schtasks /Create /TN "EPUB Reader Clips" /SC HOURLY /F /TR "\"C:\Program Files\nodejs\node.exe\" \"C:\Users\takoy\Documents\EPUB_Reader\tools\export-clips.mjs\" \"C:\Users\takoy\Documents\epub-reader-sync\" \"C:\Users\takoy\iCloudDrive\iCloud~md~obsidian\knowledge\読書クリップ\""
+schtasks /Create /TN "EPUB Reader Clips" /SC HOURLY /F /TR "\"C:\Program Files\nodejs\node.exe\" \"C:\Users\takoy\Documents\EPUB_Reader\tools\export-clips.mjs\" \"C:\Users\takoy\Documents\epub-reader-sync\" \"C:\Users\takoy\iCloudDrive\iCloud~md~obsidian\knowledge\013 読書クリップ\""
 ```
 
 > 反映の流れ: iPhone/iPad で記録 → GitHub → (PC が起動している時に)スクリプトが pull して
