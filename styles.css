@@ -385,8 +385,10 @@ html.reading, html.reading body { background: #fff; }
 .reader-search-snippet b { font-weight: 700; background: #ffe9a8; border-radius: 3px; }
 
 /* ============ 同期設定(ヘッダの歯車で開くオーバーレイ。sync/settingsView.js が生成) ============ */
-#sync-settings-button { font-size: 24px; }
-#sync-settings-button.is-syncing { animation: sync-spin 1s linear infinite; } /* 同期中の進行表示 */
+/* 歯車は塗りギアの SVG(中心 (12,12) 対称)。.icon-button svg の既定は線アイコン用なので上書きする。 */
+#sync-settings-button svg { fill: currentColor; stroke: none; width: 22px; height: 22px; }
+/* 同期中の回転は SVG 自身に中心軸で当てる(ボタンを回すとグリフ/字形の中心ずれで軸ブレして見えるため)。 */
+#sync-settings-button.is-syncing svg { animation: sync-spin 1s linear infinite; transform-origin: 50% 50%; }
 @keyframes sync-spin { to { transform: rotate(360deg); } }
 
 .sync-settings {

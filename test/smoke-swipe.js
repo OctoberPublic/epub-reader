@@ -5,6 +5,8 @@
 //  (3) フリック方向の左右セクタが ±30° で、斜め(30°〜60°)のスワイプは方向なし=何も起きない
 // パッチで (1)234→450ms (2)300→700ms (3)±30°→±45° に緩和した。このスモークは
 // 「ゆっくりスワイプ」「置いてからスワイプ」「斜めスワイプ」がそれぞれ1ページ送りになることを確認する。
+// さらに「敏感すぎる」対策として、ページめくり成立に距離ゲート(変位 >=40px ≒ 1cm)を追加した
+// (bibi.js)。小さなスワイプ(<40px)では送られず、約1cm のスワイプで送られることも確認する。
 // 使い方: 別ターミナルで `node test/devserver.js` 起動後 `node test/smoke-swipe.js`
 import { chromium } from 'playwright'
 import { makeVerticalEpub } from './make-vertical-epub.js'
@@ -101,6 +103,18 @@ const main = async () => {
   await wait(900)
   const p4 = await pageNo(page)
   ok('斜め(約40°)のスワイプでも1ページ送られる', p4 === p3 + dir, `${p3}→${p4} (期待 ${p3 + dir})`)
+
+  // (e) 小さなスワイプ(20px<40px): 距離ゲート未満なのでページは送られない(敏感すぎ対策)
+  await swipe(page, { dx: 20, delayBeforeMove: 50, duration: 150 })
+  await wait(900)
+  const p5 = await pageNo(page)
+  ok('小さなスワイプ(20px)ではページが送られない', p5 === p4, `${p4}→${p5} (据え置き期待 ${p4})`)
+
+  // (f) 約1cm のスワイプ(50px>=40px): 距離ゲートを超えるので1ページ送られる
+  await swipe(page, { dx: 50, delayBeforeMove: 50, duration: 150 })
+  await wait(900)
+  const p6 = await pageNo(page)
+  ok('約1cm(50px)のスワイプで1ページ送られる', p6 === p5 + dir, `${p5}→${p6} (期待 ${p5 + dir})`)
 
   ok('未捕捉の JS 例外が無い', errors.length === 0, errors.slice(0, 3).join(' | '))
 

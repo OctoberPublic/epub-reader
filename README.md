@@ -43,7 +43,8 @@ test/                     E2E スモークテスト(Playwright)+ devserver(Range
 ```
 
 > Bibi の `vendor/bibi/resources/scripts/bibi.js` には当アプリ用の小さなパッチがあります
-> (固定レイアウト自動判定/見開きの単独ページ指定/SVG 比率正規化/iOS 向け at-once 抽出)。
+> (固定レイアウト自動判定/見開きの単独ページ指定/SVG 比率正規化/iOS 向け at-once 抽出/
+> スワイプ判定の時間・角度ゲート緩和/ページめくり成立の距離ゲート ±40px≒1cm)。
 > **Bibi を更新するとパッチは消える**ため、更新時は再適用してください。
 
 ## 開発(Windows)
