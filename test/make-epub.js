@@ -15,12 +15,15 @@ const container = `<?xml version="1.0"?>
   </rootfiles>
 </container>`
 
-const opf = `<?xml version="1.0" encoding="utf-8"?>
+// XML 特殊文字をエスケープ(タイトル/著者を OPF に安全に埋め込む)
+const xmlEscape = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' }[c]))
+
+const opf = ({ title, author }) => `<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid" xml:lang="ja">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:identifier id="bookid">urn:uuid:smoke-test-0001</dc:identifier>
-    <dc:title>テスト書籍</dc:title>
-    <dc:creator>テスト著者</dc:creator>
+    <dc:title>${xmlEscape(title)}</dc:title>
+    <dc:creator>${xmlEscape(author)}</dc:creator>
     <dc:language>ja</dc:language>
     <meta property="dcterms:modified">2024-01-01T00:00:00Z</meta>
     <meta name="cover" content="cover-img"/>
@@ -61,11 +64,12 @@ const coverSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="90
   <text x="300" y="450" font-size="64" fill="#ffffff" text-anchor="middle">COVER</text>
 </svg>`
 
-export async function makeTestEpub() {
+// title/author は省略可(既定は従来どおり)。ヘッダのタイトル表示テスト等で長いタイトルを渡せる。
+export async function makeTestEpub({ title = 'テスト書籍', author = 'テスト著者' } = {}) {
   const zip = new JSZip()
   zip.file('mimetype', 'application/epub+zip')
   zip.file('META-INF/container.xml', container)
-  zip.file('OEBPS/content.opf', opf)
+  zip.file('OEBPS/content.opf', opf({ title, author }))
   zip.file('OEBPS/nav.xhtml', nav)
   zip.file('OEBPS/cover.svg', coverSvg)
   zip.file('OEBPS/chapter1.xhtml', chapter('第1章 はじめに', 'SMOKE_TEST_CHAPTER_ONE'))

@@ -327,6 +327,8 @@ export class BibiReader {
         if (this.#restoreLoc) this.#focusOnAnchor(this.#restoreLoc)
         // ハイライトの Range はノード参照なので再レイアウトで作り直す(restoreLoc の有無に関わらず)。
         this.#highlight?.reapply()
+        // 左右ボタン群の幅が変わりうる(回転/フォント変更等)のでタイトル窓も再採寸・マーキー再計算。
+        this.#layoutTitle()
       }, 150)
     }
     this.#onBibiRelayout = onRelayout
@@ -411,8 +413,11 @@ export class BibiReader {
         '.bibi-app-single-row small{display:block;margin-top:3px;font-size:11px;opacity:.65}' +
         '.bibi-app-single-row:active{background:rgba(127,127,127,.18)}' +
         // ヘッダ中央の本タイトル(中央タップでメニューと一緒にフェード表示)。
-        // 白背景に濃いグレー文字。長いタイトルは省略記号で切り、左右ボタン群とは margin で離す。
-        '#bibi-app-title{position:absolute;top:0;left:0;right:0;height:39px;line-height:39px;margin:0 64px;text-align:center;font-size:13px;color:#707070;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;opacity:0;-webkit-transition:opacity .75s linear;transition:opacity .75s linear}' +
+        // 左右アイコン群の「間」に収まる窓(overflow:hidden)。窓の left/right は #layoutTitle が実測して
+        // インライン style で上書きする(64px はフォールバック)。長いタイトルは窓の中で右→左にマーキー
+        // (#layoutTitle)。短いものは中央静止。pointer-events:none で中央タップのメニュー開閉を妨げない。
+        '#bibi-app-title{position:absolute;top:0;left:64px;right:64px;height:39px;display:-webkit-box;display:flex;-webkit-box-align:center;align-items:center;-webkit-box-pack:center;justify-content:center;overflow:hidden;font-size:13px;color:#707070;pointer-events:none;opacity:0;-webkit-transition:opacity .75s linear;transition:opacity .75s linear}' +
+        '#bibi-app-title-inner{white-space:nowrap;will-change:transform}' +
         // メニュー開閉と同じクラスに opacity を紐付け、同じタイミング・同じフェードで出入りさせる。
         'html.menu-opened #bibi-app-title,html.panel-opened #bibi-app-title,html.subpanel-opened #bibi-app-title,div#bibi-menu.hover #bibi-app-title{opacity:1}' +
         // [C修正] メニュー非表示時はヘッダのボタン(ライブラリ/目次/設定 等)を無効化する。Bibi 既定 CSS は
@@ -521,7 +526,8 @@ export class BibiReader {
   }
 
   // ヘッダ(#bibi-menu)の中央へ「本のタイトル - 著者名」を差し込む。著者名が無ければタイトルのみ。
-  // 配置・フェードは上で注入した CSS(#bibi-app-title)が担う。中央タップ判定を妨げないよう
+  // 窓(#bibi-app-title)+ 中身(#bibi-app-title-inner)の2層。配置・フェードは注入 CSS が担い、
+  // 窓の左右位置とマーキーは #layoutTitle が実測して設定する。中央タップ判定を妨げないよう
   // pointer-events:none。再オープン時は iframe ごと作り直されるため常に現在の本に一致する。
   #injectTitle(doc) {
     if (doc.getElementById('bibi-app-title')) return // 二重注入防止
@@ -534,8 +540,70 @@ export class BibiReader {
     if (!label) return
     const el = doc.createElement('div')
     el.id = 'bibi-app-title'
-    el.textContent = label // textContent で安全に設定(HTML エスケープ不要)
+    const inner = doc.createElement('span')
+    inner.id = 'bibi-app-title-inner'
+    inner.textContent = label // textContent で安全に設定(HTML エスケープ不要)
+    el.appendChild(inner)
     menu.appendChild(el)
+    this.#layoutTitle(doc)
+    // レイアウト(左右ボタン群の幅)が確定するまで少し待って再計算。
+    setTimeout(() => this.#layoutTitle(doc), 300)
+  }
+
+  // タイトル窓を左右アイコン群の「間」に収め、はみ出す時は右→左へマーキー(自動スクロール)する。
+  // 左右群の幅は端末/向き/フォントで変わるため実測する。収まる時は中央静止。視差控えめ設定時は
+  // スクロールせず末尾を「…」で省略。再レイアウト時(#setupRepin)にも呼ばれて追従する。
+  #layoutTitle(doc) {
+    try {
+      if (!doc) { try { doc = this.#iframe && this.#iframe.contentDocument } catch { doc = null } }
+      if (!doc) return
+      const el = doc.getElementById('bibi-app-title')
+      const inner = doc.getElementById('bibi-app-title-inner')
+      if (!el || !inner) return
+      const L = doc.getElementById('bibi-menu-l')
+      const R = doc.getElementById('bibi-menu-r')
+      const GAP = 8
+      const lw = (L && L.offsetWidth) || 56
+      const rw = (R && R.offsetWidth) || 56
+      el.style.left = (lw + GAP) + 'px'
+      el.style.right = (rw + GAP) + 'px'
+      // 採寸前に既存アニメ/変形をリセット(マーキー作動中の幅は当てにならないため)
+      if (inner._anim) { try { inner._anim.cancel() } catch { /* 破棄済み */ } inner._anim = null }
+      inner.style.transform = 'translateX(0)'
+      inner.style.display = ''
+      inner.style.maxWidth = ''
+      inner.style.overflow = ''
+      inner.style.textOverflow = ''
+      const overflow = inner.getBoundingClientRect().width - el.clientWidth
+      if (overflow <= 1) { el.style.justifyContent = 'center'; return } // 窓に収まる→中央で静止
+      const win = doc.defaultView
+      const reduce = !!(win && win.matchMedia && win.matchMedia('(prefers-reduced-motion: reduce)').matches)
+      el.style.justifyContent = 'flex-start'
+      if (reduce) {
+        // 視差を減らす設定: スクロールせず末尾省略
+        inner.style.display = 'block'
+        inner.style.maxWidth = '100%'
+        inner.style.overflow = 'hidden'
+        inner.style.textOverflow = 'ellipsis'
+        return
+      }
+      if (typeof inner.animate !== 'function') return // 非対応環境は左寄せ静止(害なし)
+      // 右→左マーキー: 先頭で静止→端まで流す→末尾で静止→戻る、を無限ループ
+      const SPEED = 45 // px/s
+      const dwell = 1.4 // 端での静止秒
+      const travel = overflow / SPEED
+      const total = dwell * 2 + travel * 2
+      const p1 = dwell / total
+      const p2 = (dwell + travel) / total
+      const p3 = (dwell + travel + dwell) / total
+      inner._anim = inner.animate([
+        { transform: 'translateX(0)', offset: 0 },
+        { transform: 'translateX(0)', offset: p1 },
+        { transform: `translateX(${-overflow}px)`, offset: p2 },
+        { transform: `translateX(${-overflow}px)`, offset: p3 },
+        { transform: 'translateX(0)', offset: 1 },
+      ], { duration: total * 1000, iterations: Infinity, easing: 'linear' })
+    } catch { /* レイアウト過渡などは無視 */ }
   }
 
   // 縦書き小説(reflowable)のページ送りを横スライドで見せる。Bibi は paged モードのとき、
