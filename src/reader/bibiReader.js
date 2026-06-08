@@ -23,6 +23,7 @@ import { getBookFile } from '../storage/books.js'
 import { extractIdentifier } from '../util/epubMeta.js'
 import { BookSearch } from './bookSearch.js'
 import { BookClip } from './bookClip.js'
+import { BookHighlight } from './bookHighlight.js'
 
 const $ = (id) => document.getElementById(id)
 
@@ -60,7 +61,10 @@ export class BibiReader {
   #lastRelayoutAt = 0      // 直近の再レイアウト(bibi:resized/laid-out)時刻。直後のページ変化は再固定が戻すので保存しない
   #bookId = null           // この本の dc:identifier(=Bibi の A.ID)。localStorage の位置キー BibiBiscuits…#<A.ID> を本ごとに一意特定するため
   #search = null           // 本文検索(ヘッダの検索ボタンで開くオーバーレイ。bookSearch.js)
-  #clip = null             // 選択した文の記録(ヘッダの記録ボタン。bookClip.js)
+  #clip = null             // 選択した文の記録(ヘッダの統合ボタン。bookClip.js)
+  #highlight = null        // 選択した文のハイライト(ヘッダの統合ボタン。bookHighlight.js)
+  #markSheet = null        // ハイライト/記録 のアクションシート(親 DOM。背面オーバーレイ)
+  #markSheetBody = null    // アクションシートの中身(ボタンを並べる要素)
   #onNotify                // 操作の結果(記録しました 等)をユーザーへ知らせる(main.js が toast を渡す)
 
   constructor({ onBack, onError, onNotify } = {}) {
@@ -111,6 +115,8 @@ export class BibiReader {
     this.#search = new BookSearch({ getIframe: () => this.#iframe })
     // 選択した文の記録(クリップ)。selectionchange の購読はロード後に start() する。
     this.#clip = new BookClip({ getIframe: () => this.#iframe, getRecord: () => this.#record })
+    // 選択した文のハイライト(保存済みの描画はロード後に start() する)。
+    this.#highlight = new BookHighlight({ getIframe: () => this.#iframe, getRecord: () => this.#record })
     const f = document.createElement('iframe')
     f.className = 'bibi-frame'
     f.setAttribute('allow', 'fullscreen')
@@ -171,7 +177,8 @@ export class BibiReader {
     const esc = $('reader-escape')
     if (esc) esc.hidden = true
     this.#setupProgress() // 本文が出たので読書進捗の購読を開始
-    this.#clip?.start() // 選択の控え(selectionchange)の購読を開始(記録ボタン用)
+    this.#clip?.start() // 選択の控え(selectionchange)の購読を開始(統合ボタン用)
+    this.#highlight?.start() // 保存済みハイライトを描画
     this.#scheduleRestore() // 保存済みの位置(IIPP)があれば、レイアウト安定後に正確な位置へ復元
   }
 
@@ -315,9 +322,12 @@ export class BibiReader {
     this.#repinDoc = doc
     const onRelayout = () => {
       this.#lastRelayoutAt = Date.now() // 直後のページ変化は保存対象外にする(#readAndSaveProgress)
-      if (!this.#restoreLoc) return
       if (this.#repinDebounce) clearTimeout(this.#repinDebounce)
-      this.#repinDebounce = setTimeout(() => { if (this.#restoreLoc) this.#focusOnAnchor(this.#restoreLoc) }, 150)
+      this.#repinDebounce = setTimeout(() => {
+        if (this.#restoreLoc) this.#focusOnAnchor(this.#restoreLoc)
+        // ハイライトの Range はノード参照なので再レイアウトで作り直す(restoreLoc の有無に関わらず)。
+        this.#highlight?.reapply()
+      }, 150)
     }
     this.#onBibiRelayout = onRelayout
     doc.addEventListener('bibi:resized', onRelayout)   // リサイズ relayout 後(resize-follow/回転/フォント)
@@ -392,11 +402,11 @@ export class BibiReader {
       const st = doc.createElement('style')
       st.id = 'bibi-app-button-style'
       st.textContent =
-        '.bibi-icon-to-library,.bibi-icon-search,.bibi-icon-clip{display:-webkit-box;display:flex;-webkit-box-pack:center;justify-content:center;-webkit-box-align:center;align-items:center;width:100%;height:100%;text-decoration:none}' +
-        '.bibi-icon-to-library:before,.bibi-icon-search:before,.bibi-icon-clip:before{font:22px/1 "Material Icons";-webkit-font-feature-settings:"liga";font-feature-settings:"liga";text-transform:none;-webkit-font-smoothing:antialiased}' +
+        '.bibi-icon-to-library,.bibi-icon-search,.bibi-icon-mark{display:-webkit-box;display:flex;-webkit-box-pack:center;justify-content:center;-webkit-box-align:center;align-items:center;width:100%;height:100%;text-decoration:none}' +
+        '.bibi-icon-to-library:before,.bibi-icon-search:before,.bibi-icon-mark:before{font:22px/1 "Material Icons";-webkit-font-feature-settings:"liga";font-feature-settings:"liga";text-transform:none;-webkit-font-smoothing:antialiased}' +
         '.bibi-icon-to-library:before{content:"arrow_back"}' +
         '.bibi-icon-search:before{content:"search"}' +
-        '.bibi-icon-clip:before{content:"format_quote"}' +
+        '.bibi-icon-mark:before{content:"border_color"}' +
         '.bibi-app-single-row{display:block;width:100%;box-sizing:border-box;padding:14px 16px;margin-top:6px;border-top:1px solid rgba(127,127,127,.3);font-size:14px;line-height:1.4;text-align:center;cursor:pointer;color:inherit}' +
         '.bibi-app-single-row small{display:block;margin-top:3px;font-size:11px;opacity:.65}' +
         '.bibi-app-single-row:active{background:rgba(127,127,127,.18)}' +
@@ -439,22 +449,75 @@ export class BibiReader {
     // このボタンは左上=Bibi の左フリッパ(次ページ)ゾーンと重なり、タップが「ページ送り」も
     // 誘発しうる(実機 iOS で観測)。離脱フラグを立て、その+1を保存しない(#readAndSaveProgress)。
     ul.appendChild(makeBtn('bibi-button-to-library', 'bibi-icon-to-library', 'ライブラリ', () => { this.#leaving = true; this.#onBack?.() }))
-    // 「選択した文を記録」(クリップ)と「本文検索」はヘッダ右群(設定ボタン等の並び)の先頭へ。
+    // 「ハイライト/記録」(統合ボタン)と「本文検索」はヘッダ右群(設定ボタン等の並び)の先頭へ。
     // 右群が見つからないビルド差異時は左群(ライブラリの隣)へフォールバック。
-    // 並び順: [検索][記録][Bibi の既存ボタン…](記録を先に挿入してから検索をその左へ)。
+    // 並び順: [検索][ハイライト/記録][Bibi の既存ボタン…](統合を先に挿入してから検索をその左へ)。
     const ulR = doc.querySelector('#bibi-menu-r ul') || ul
-    ulR.insertBefore(makeBtn('bibi-button-clip', 'bibi-icon-clip', '選択した文を記録', () => this.#recordClip()), ulR.firstChild)
+    ulR.insertBefore(makeBtn('bibi-button-mark', 'bibi-icon-mark', 'ハイライト / 記録', () => this.#openMarkSheet()), ulR.firstChild)
     ulR.insertBefore(makeBtn('bibi-button-search', 'bibi-icon-search', '本文検索', () => this.#search?.open()), ulR.firstChild)
     this.#injectTitle(doc)
     this.#injectSinglePageRow(doc)
     this.#setupPageSlide(doc)
   }
 
-  // 記録ボタン: 選択中(または直前に選択していた)文字列をクリップとして保存し、結果をトーストで知らせる。
-  async #recordClip() {
-    if (!this.#clip) return
-    const res = await this.#clip.record()
-    this.#onNotify?.(res.message)
+  // 統合ボタン: 選択中(または直前に選択していた)文字列に対し、「ハイライト」か「記録(クリップ)」かを
+  // 選ぶアクションシートを親 DOM(#reader-view 直下)に開く。選択が既存ハイライトに重なる場合は
+  // 「ハイライトを解除」を出す。UI を iframe 内ではなく親に置くのは IME/スタイル干渉を避けるため
+  // (検索オーバーレイ bookSearch.js と同じ流儀)。
+  async #openMarkSheet() {
+    const sel = this.#clip?.currentSelection() || this.#clip?.cachedSelection()
+    if (!sel) { this.#onNotify?.('文を選択してから押してください'); return }
+    const overlap = this.#highlight ? await this.#highlight.hasOverlap(sel) : false
+    const rows = []
+    if (overlap) rows.push({ label: 'ハイライトを解除', run: () => this.#highlight.unhighlight(sel) })
+    else rows.push({ label: 'ハイライト', run: () => this.#highlight.highlight(sel) })
+    rows.push({ label: '記録(クリップ)', run: () => this.#clip.record() })
+    this.#showMarkSheet(rows)
+  }
+
+  // アクションシートの DOM を作って表示する(初回のみ生成しキャッシュ)。
+  #showMarkSheet(rows) {
+    if (!this.#markSheet) {
+      const host = $('reader-view') || document.body
+      const backdrop = document.createElement('div')
+      backdrop.className = 'reader-mark-backdrop'
+      backdrop.hidden = true
+      const sheet = document.createElement('div')
+      sheet.className = 'reader-mark-sheet'
+      backdrop.appendChild(sheet)
+      backdrop.addEventListener('click', (e) => { if (e.target === backdrop) this.#hideMarkSheet() })
+      host.appendChild(backdrop)
+      this.#markSheet = backdrop
+      this.#markSheetBody = sheet
+    }
+    const sheet = this.#markSheetBody
+    sheet.textContent = ''
+    for (const r of rows) {
+      const btn = document.createElement('button')
+      btn.className = 'reader-mark-row'
+      btn.textContent = r.label
+      btn.addEventListener('click', async () => {
+        this.#hideMarkSheet()
+        try { const res = await r.run(); if (res && res.message) this.#onNotify?.(res.message) }
+        catch (e) { console.warn('操作に失敗:', e); this.#onNotify?.('操作に失敗しました') }
+      })
+      sheet.appendChild(btn)
+    }
+    const cancel = document.createElement('button')
+    cancel.className = 'reader-mark-row reader-mark-cancel'
+    cancel.textContent = 'キャンセル'
+    cancel.addEventListener('click', () => this.#hideMarkSheet())
+    sheet.appendChild(cancel)
+    this.#markSheet.hidden = false
+  }
+
+  #hideMarkSheet() {
+    if (this.#markSheet) this.#markSheet.hidden = true
+  }
+
+  // pull 反映後など、外部から開いている本のハイライトを再描画する(main.js の setOnApplied 用)。
+  reapplyHighlights() {
+    this.#highlight?.reapply()
   }
 
   // ヘッダ(#bibi-menu)の中央へ「本のタイトル - 著者名」を差し込む。著者名が無ければタイトルのみ。
@@ -579,6 +642,8 @@ export class BibiReader {
     this.#stopResizeFollow()
     if (this.#search) { this.#search.destroy(); this.#search = null } // 検索オーバーレイ/ハイライトを破棄
     if (this.#clip) { this.#clip.destroy(); this.#clip = null } // 選択の控え/購読ポーリングを破棄
+    if (this.#highlight) { this.#highlight.destroy(); this.#highlight = null } // ハイライト描画を破棄
+    this.#hideMarkSheet() // アクションシートが開いていれば閉じる
     if (this.#restoreTimer) { clearTimeout(this.#restoreTimer); this.#restoreTimer = null } // 復元待ち中の離脱は復元しない
     this.#endRepin() // 再固定リスナ/タイマーを解除
     this.#teardownProgress() // iframe 破棄前に最終保存＋リスナ解除(復元前なら #restored ガードで保存しない)

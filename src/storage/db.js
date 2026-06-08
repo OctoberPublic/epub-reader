@@ -2,6 +2,7 @@
 // - 'books': メタデータ + 読書位置(keyPath: id)
 // - 'files': EPUB 本体の Blob(keyPath: id)
 // - 'clips': 読書クリップ=選択した文の記録(keyPath: id。詳細は storage/clips.js)
+// - 'highlights': ハイライト=選択した文のマーカー(keyPath: id。詳細は storage/highlights.js)
 //
 // 書籍本体を OPFS ではなく IndexedDB に置く理由:
 // Safari は OPFS の FileSystemFileHandle.createWritable()(メインスレッド書き込み)に
@@ -9,7 +10,7 @@
 // iOS Safari を主ターゲットにするため、全バージョンで確実な IndexedDB に統一する。
 
 const DB_NAME = 'epub-reader'
-const DB_VERSION = 2 // v2: 'clips'(読書クリップ)ストアを追加
+const DB_VERSION = 3 // v2: 'clips'(読書クリップ)/ v3: 'highlights'(ハイライト)ストアを追加
 
 let dbPromise = null
 
@@ -22,6 +23,7 @@ export function openDB() {
       if (!db.objectStoreNames.contains('books')) db.createObjectStore('books', { keyPath: 'id' })
       if (!db.objectStoreNames.contains('files')) db.createObjectStore('files', { keyPath: 'id' })
       if (!db.objectStoreNames.contains('clips')) db.createObjectStore('clips', { keyPath: 'id' })
+      if (!db.objectStoreNames.contains('highlights')) db.createObjectStore('highlights', { keyPath: 'id' })
     }
     req.onsuccess = () => resolve(req.result)
     req.onerror = () => reject(req.error)

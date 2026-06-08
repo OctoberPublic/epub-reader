@@ -7,7 +7,7 @@
 // (= 反映は次回起動。デプロイ後の目視確認は「×2 再起動」で行う)。
 // 書籍本体は IndexedDB にあり、仮想URL /bibi-book/<id>.epub で配信する(キャッシュ対象外)。
 
-const CACHE = 'epub-reader-v42'
+const CACHE = 'epub-reader-v43'
 const NET_TIMEOUT_MS = 4000 // ネットワーク取得のタイムアウト(固着防止)
 
 // 保存済み EPUB を仮想URL /bibi-book/<id>.epub で配信する(Bibi に .epub URL として渡すため)。
@@ -110,6 +110,8 @@ const CORE = [
   './src/reader/bibiReader.js',
   './src/reader/bookSearch.js',
   './src/reader/bookClip.js',
+  './src/reader/bookHighlight.js',
+  './src/reader/spineText.js',
   './src/sync/identity.js',
   './src/sync/githubClient.js',
   './src/sync/merge.js',
@@ -119,6 +121,7 @@ const CORE = [
   './src/storage/metadata.js',
   './src/storage/books.js',
   './src/storage/clips.js',
+  './src/storage/highlights.js',
   './src/storage/persist.js',
   './src/util/blob.js',
   './src/util/epubMeta.js',

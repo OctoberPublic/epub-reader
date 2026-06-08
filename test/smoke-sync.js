@@ -187,6 +187,51 @@ const main = async () => {
   const ids = (clips2?.clips ?? []).map((c) => c.id)
   ok('clips: 両端末のクリップが和集合で残る', ids.includes('clip-a-1') && ids.includes('clip-b-1'), `ids=${ids.join(', ')}`)
 
+  // ---- ハイライト: A で付ける → push → B で pull(双方向) ----
+  const addHighlightOn = (page, h) => page.evaluate(async (hh) => {
+    const hl = await import('/src/storage/highlights.js')
+    const sync = await import('/src/sync/sync.js')
+    const meta = await import('/src/storage/metadata.js')
+    const book = (await meta.getAllBooks())[0]
+    const now = Date.now()
+    await hl.addHighlight({ id: hh.id, stableKey: book.stableKey, title: book.title, author: book.author, itemIndex: hh.itemIndex, start: hh.start, end: hh.end, text: hh.text, color: 'yellow', createdAt: now, updatedAt: now, deleted: false })
+    sync.markHighlightsDirty(book.stableKey)
+  }, h)
+  const getHl = (page) => page.evaluate(async () => {
+    const hl = await import('/src/storage/highlights.js')
+    const meta = await import('/src/storage/metadata.js')
+    const book = (await meta.getAllBooks())[0]
+    return hl.getHighlightsFor(book.stableKey, { includeDeleted: true })
+  })
+
+  await addHighlightOn(A.page, { id: 'hl-a-1', itemIndex: 0, start: 0, end: 7, text: '吾輩は猫で' })
+  await doSync(A.page)
+  const hlPath = [...repoFiles.keys()].find((p) => /^books\/.+\/highlights\.json$/.test(p))
+  ok('hl: books/<key>/highlights.json が作られる', !!hlPath)
+  ok('hl: library.json に hasHighlights が立つ', remoteJson()?.books?.['id:urn:uuid:smoke-test-0001']?.hasHighlights === true)
+  const hlRemote = hlPath ? remoteJson(hlPath) : null
+  ok('hl: リモートに保存される', hlRemote?.highlights?.some((h) => h.id === 'hl-a-1' && h.text === '吾輩は猫で'))
+
+  await doSync(B.page) // B が pull
+  const hlB = await getHl(B.page)
+  ok('hl: B 端末に pull される(双方向)', hlB.some((h) => h.id === 'hl-a-1' && !h.deleted), `B=${JSON.stringify(hlB.map((h) => h.id))}`)
+
+  // ---- ハイライト: A で解除 → tombstone 伝播 → B で deleted ----
+  await wait(20)
+  await B.page.evaluate(() => {}) // no-op(タイミング調整)
+  await A.page.evaluate(async () => {
+    const hl = await import('/src/storage/highlights.js')
+    const sync = await import('/src/sync/sync.js')
+    const meta = await import('/src/storage/metadata.js')
+    const book = (await meta.getAllBooks())[0]
+    await hl.softDeleteHighlight('hl-a-1')
+    sync.markHighlightsDirty(book.stableKey)
+  })
+  await doSync(A.page)
+  await doSync(B.page)
+  const hlB2 = await getHl(B.page)
+  ok('hl: 解除(tombstone)が B へ伝播する', hlB2.some((h) => h.id === 'hl-a-1' && h.deleted === true), `B=${JSON.stringify(hlB2)}`)
+
   await browser.close()
   const failed = results.filter((r) => !r.pass)
   console.log(`\n==== ${results.length - failed.length}/${results.length} passed ====`)

@@ -53,13 +53,30 @@ const selectInFirstItem = (page) => page.evaluate(() => {
   return p.firstChild.nodeValue.slice(0, 10)
 })
 
-const clickClipButton = (page) => page.evaluate(() => {
-  const f = document.querySelector('#bibi-surface iframe')
-  const btn = f && f.contentDocument && f.contentDocument.getElementById('bibi-button-clip')
-  if (!btn) return false
-  btn.click()
-  return true
-})
+// 統合ボタン(ハイライト/記録)を押し、出てきたアクションシートの「記録(クリップ)」を選ぶ。
+const clickClipButton = async (page) => {
+  const opened = await page.evaluate(() => {
+    const f = document.querySelector('#bibi-surface iframe')
+    const btn = f && f.contentDocument && f.contentDocument.getElementById('bibi-button-mark')
+    if (!btn) return false
+    btn.click()
+    return true
+  })
+  if (!opened) return false
+  // シートは親 DOM に非同期で出る。「記録」行が出るまで待ってクリック。
+  try {
+    await page.waitForFunction(() => {
+      const rows = [...document.querySelectorAll('.reader-mark-row')]
+      return rows.some((r) => r.textContent.includes('記録'))
+    }, { timeout: 3000 })
+  } catch { return false }
+  return page.evaluate(() => {
+    const row = [...document.querySelectorAll('.reader-mark-row')].find((r) => r.textContent.includes('記録'))
+    if (!row) return false
+    row.click()
+    return true
+  })
+}
 
 const main = async () => {
   const epub = await makeTestEpub()
@@ -86,7 +103,7 @@ const main = async () => {
     const f = document.querySelector('#bibi-surface iframe')
     const d = f && f.contentDocument
     const item = d && d.querySelector('#bibi-main-book iframe.item')
-    const btn = d && d.getElementById('bibi-button-clip')
+    const btn = d && d.getElementById('bibi-button-mark')
     let body = null
     try { body = item && item.contentDocument && item.contentDocument.body } catch { body = null }
     return !!(btn && body && body.textContent && body.textContent.length > 10)

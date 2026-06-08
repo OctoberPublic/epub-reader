@@ -66,3 +66,52 @@ export function mergeClips(remote, { stableKey, title, author, clips }) {
     clips: merged,
   }
 }
+
+// ハイライト(books/<stableKeySafe>/highlights.json)のマージ(純関数)。クリップと違い双方向同期:
+// リモートにしか無い/より新しいハイライトはローカルへも反映する必要がある(相手端末で表示するため)。
+// 同 id は updatedAt(無ければ createdAt)の新しい方を採用。同時刻は deleted=true を優先(安全側=
+// 解除を取りこぼさない)。解除(deleted)もレコードを残して伝播させる(tombstone)。
+// 返り値:
+//   json         … リポジトリへ書き戻す内容(tombstone 込みの全件)
+//   localUpdates … ローカルへ反映すべきリモート由来レコード(ローカルに無い/勝者がリモート側)。
+//                  applyRemoteHighlights に渡す分。
+export function mergeHighlights(remote, { stableKey, title, author, highlights }) {
+  const remoteList = (remote && Array.isArray(remote.highlights)) ? remote.highlights : []
+  const localById = new Map()
+  for (const h of highlights ?? []) if (h && h.id) localById.set(h.id, h)
+  const remoteById = new Map()
+  for (const h of remoteList) if (h && h.id) remoteById.set(h.id, h)
+
+  // 2 つの版のうち「新しい方」を返す(同 id 用)。t は updatedAt 優先、無ければ createdAt。
+  const stamp = (h) => (typeof h.updatedAt === 'number' ? h.updatedAt : (h.createdAt ?? 0))
+  const winner = (a, b) => {
+    if (!a) return b
+    if (!b) return a
+    const ta = stamp(a), tb = stamp(b)
+    if (ta !== tb) return ta > tb ? a : b
+    // 同時刻: deleted を優先(解除を取りこぼさない)。どちらも同状態なら a(ローカル)を残す。
+    if (!!a.deleted !== !!b.deleted) return a.deleted ? a : b
+    return a
+  }
+
+  const merged = new Map()
+  const localUpdates = []
+  const ids = new Set([...localById.keys(), ...remoteById.keys()])
+  for (const id of ids) {
+    const l = localById.get(id)
+    const r = remoteById.get(id)
+    const win = winner(l, r)
+    merged.set(id, win)
+    // ローカルが負けた(=リモート由来が勝った/ローカルに無い)なら、ローカルへ反映する。
+    if (win !== l) localUpdates.push(win)
+  }
+
+  const json = {
+    schemaVersion: 1,
+    stableKey,
+    title: title || remote?.title || '',
+    author: author || remote?.author || '',
+    highlights: [...merged.values()].sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0)),
+  }
+  return { json, localUpdates }
+}

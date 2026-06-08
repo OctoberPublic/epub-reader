@@ -16,6 +16,7 @@
 
 import { addClip } from '../storage/clips.js'
 import { markClipsDirty, schedulePush } from '../sync/sync.js'
+import { spineItems } from './spineText.js'
 
 const CACHED_SELECTION_MS = 2 * 60 * 1000 // 控えの選択を有効とみなす時間(選択→メニュー→記録の操作間)
 
@@ -67,7 +68,7 @@ export class BookClip {
 
   // 記録ボタンから呼ぶ。結果をメッセージで返す(呼び出し側がトースト表示する)。
   async record() {
-    const sel = this.#currentSelection() || this.#cachedSelection()
+    const sel = this.currentSelection() || this.cachedSelection()
     if (!sel) return { ok: false, message: '記録する文を選択してください' }
     const record = this.#getRecord() || {}
     if (!record.stableKey) return { ok: false, message: 'この本の同期キーが未設定です(ライブラリへ戻って開き直してください)' }
@@ -97,8 +98,9 @@ export class BookClip {
     return { ok: true, message: where ? `記録しました(${where})` : '記録しました' }
   }
 
-  // ---- 選択の取得 ----
-  #currentSelection() {
+  // ---- 選択の取得(ハイライト機能とも共有するため public) ----
+  // 現在 item iframe 内で選択中の文字列。{text, itemIndex, range} か null。
+  currentSelection() {
     for (const ifr of this.#items()) {
       let win
       try { win = ifr.contentWindow } catch { continue }
@@ -114,25 +116,20 @@ export class BookClip {
     return null
   }
 
-  #cachedSelection() {
+  // 直前に控えた選択(iOS でメニュー操作時に選択が解除される対策)。期限切れなら null。
+  cachedSelection() {
     if (!this.#last) return null
     if (Date.now() - this.#last.at > CACHED_SELECTION_MS) return null
     return this.#last
   }
 
-  // 読み込み済みの spine item iframe を spine 順で返す(bookSearch.js と同じ走査)
+  // 読み込み済みの spine item iframe を spine 順で返す(共通処理。spineText.js)
   #items() {
     const f = this.#getIframe()
     if (!f) return []
     let doc
     try { doc = f.contentDocument } catch { return [] }
-    if (!doc) return []
-    const out = []
-    for (const x of doc.querySelectorAll('#bibi-main-book iframe.item')) {
-      if (typeof x.Index !== 'number') continue
-      try { if (x.contentDocument && x.contentDocument.body) out.push(x) } catch { /* 未ロードは飛ばす */ }
-    }
-    return out.sort((a, b) => a.Index - b.Index)
+    return spineItems(doc)
   }
 
   // ---- 章名(目次 → item の <title> の順で引く) ----

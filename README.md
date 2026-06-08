@@ -16,6 +16,8 @@ EPUB 描画には [Bibi](https://github.com/satorumurmur/bibi)(MIT)を使用し�
   プライベートリポジトリ経由で同期(下記「端末間の同期」)。EPUB 本体は同期しない
 - **読書クリップ**(任意): 読書中に選択した文を、章名・ページ番号つきで記録。同期リポジトリ
   経由で PC のスクリプトが Obsidian 用 md を生成(下記「読書クリップ(Obsidian 連携)」)
+- **ハイライト**(任意): 読書中に選択した文に黄マーカー。端末間で同期され、iPad で付けた
+  ハイライトが iPhone でも表示される(解除も同期)。同期設定が前提(下記「端末間の同期」)
 
 ## ディレクトリ構成
 
@@ -31,6 +33,8 @@ src/
   storage/                IndexedDB(書籍本体・メタ・読書位置)/ 永続化(persist)
   library/                取り込み・本棚
   reader/bibiReader.js    Bibi を全画面 iframe で開くラッパ + メニュー統合ボタン
+  reader/bookSearch.js    本文検索  reader/bookClip.js  クリップ  reader/bookHighlight.js  ハイライト
+  reader/spineText.js     本文テキスト走査・Range変換の共通処理(検索/クリップ/ハイライトで共有)
   sync/                   端末間同期(GitHub Contents API・LWWマージ・設定パネル)
   util/                   メタデータ抽出(epubMeta)+ 最小ZIP読取(zipReader)
   version.js              バージョン表示文字列
@@ -72,13 +76,15 @@ node test/smoke-import.js       # 取り込み/重複スキップ/フィルタ
 node test/smoke-bibi.js         # 縦書きの右→左横めくり
 node test/smoke-bibi-fxl.js     # 固定レイアウト昇格・見開き・SVG正規化
 node test/smoke-bibi-spread.js  # 見開きの単独ページ指定・メニュー統合ボタン
-node test/smoke-sync.js         # 端末間同期(偽 GitHub で 2 端末の往復+クリップ push)
+node test/smoke-sync.js         # 端末間同期(偽 GitHub で 2 端末の往復+クリップ/ハイライト)
 node test/smoke-clip.js         # 読書クリップ(選択→記録→章名/ページ保存)
+node test/smoke-highlight.js    # ハイライト(選択→マーカー→再レイアウト維持→解除)
 
 # 単体テスト(ブラウザ・devserver 不要)
 node test/unit-merge.js         # 同期マージ(LWW)の純ロジック
 node test/unit-github.js        # GitHub クライアント(base64/競合リトライ)
 node test/unit-clips.js         # クリップの和集合マージ+md 組み立て
+node test/unit-highlights.js    # ハイライトのマージ(双方向・tombstone)
 ```
 
 ## iPhone / iPad で使う(Mac 不要)
@@ -152,6 +158,19 @@ schtasks /Create /TN "EPUB Reader Clips" /SC HOURLY /F /TR "\"C:\Program Files\n
 > 反映の流れ: iPhone/iPad で記録 → GitHub → (PC が起動している時に)スクリプトが pull して
 > md 生成 → iCloud が各端末へ配信 → Obsidian で閲覧。PC を経由するため、記録から Obsidian で
 > 見えるまでにはタイムラグがあります(即時性が必要なら PC で手動実行)。
+
+## ハイライト
+
+読書中に文を選択し、ヘッダの **マーカーボタン** を押すと「ハイライト / 記録(クリップ)」の
+選択肢が出ます。「ハイライト」を選ぶと選択箇所に黄マーカーが付きます。**端末間の同期**(上記)を
+設定していれば、iPad で付けたハイライトが iPhone でも表示されます(`books/<本のキー>/highlights.json`
+で双方向同期)。選択が既存ハイライトに重なっている時は「ハイライトを解除」が出て、解除も端末間で
+伝播します。
+
+> ハイライトの位置は「章(spine item)内の文字位置」で記録するため、フォントサイズや画面の向き、
+> 端末が違っても同じ箇所に表示されます(両端末に同じ EPUB を取り込んでいることが前提)。
+> 表示には CSS Custom Highlight API を使います(iOS 17.2+ / Chrome 105+。非対応の古い環境では
+> マーカーが表示されませんが、保存・同期は行われます)。
 
 ### ストレージ永続化について
 iOS は無操作が続くとサイトデータを削除することがありますが、**ホーム画面に追加した PWA は対象外**になりやすく、本アプリは起動時に `navigator.storage.persist()` で永続化を要求します。万一消えても、元の EPUB を再取り込みすれば復旧できます(原本は手元に残す前提)。

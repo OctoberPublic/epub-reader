@@ -126,8 +126,12 @@ function wireGlobal() {
   $('sync-settings-button').addEventListener('click', () => syncSettings.open())
   // 同期中は歯車アイコンを回す(進行表示)
   sync.onStatusChange((st) => $('sync-settings-button').classList.toggle('is-syncing', st.syncing))
-  // pull でローカルが更新されたら、ライブラリ表示中なら再描画して反映する
-  sync.setOnApplied(() => { if (!location.hash) library.refresh().catch(() => {}) })
+  // pull でローカルが更新されたら反映する。ライブラリ表示中はカードを再描画、
+  // 読書中(#read=)は開いている本のハイライトを再描画する(他端末で付けた/解除したハイライトの反映)。
+  sync.setOnApplied(() => {
+    if (/^#read=/.test(location.hash)) reader.reapplyHighlights()
+    else library.refresh().catch(() => {})
+  })
   // バックグラウンド化(ホームへ戻る等)時にベストエフォートで push。iOS は PWA を容赦なく kill
   // するため保証は無いが、失敗しても次回起動時の同期で回収される(sync.js 冒頭コメント参照)。
   document.addEventListener('visibilitychange', () => {
