@@ -66,11 +66,13 @@ export class BibiReader {
   #markSheet = null        // ハイライト/記録 のアクションシート(親 DOM。背面オーバーレイ)
   #markSheetBody = null    // アクションシートの中身(ボタンを並べる要素)
   #onNotify                // 操作の結果(記録しました 等)をユーザーへ知らせる(main.js が toast を渡す)
+  #onLoaded                // 本文の描画が成功した時に本の id を渡す(main.js が「最後に読んでいた本」を保存)
 
-  constructor({ onBack, onError, onNotify } = {}) {
+  constructor({ onBack, onError, onNotify, onLoaded } = {}) {
     this.#onBack = onBack
     this.#onError = onError
     this.#onNotify = onNotify
+    this.#onLoaded = onLoaded
   }
 
   // record: メタレコード({ id, title, singlePages?, ... })。本体は SW が IndexedDB から配信する。
@@ -180,6 +182,9 @@ export class BibiReader {
     this.#clip?.start() // 選択の控え(selectionchange)の購読を開始(統合ボタン用)
     this.#highlight?.start() // 保存済みハイライトを描画
     this.#scheduleRestore() // 保存済みの位置(IIPP)があれば、レイアウト安定後に正確な位置へ復元
+    // 本文が出た=この本は実際に開けた。main.js に通知し「最後に読んでいた本」を保存させる
+    // (再起動時の読書画面復帰用)。描画成功時のみ保存することで、壊れた本での再突入ループを防ぐ。
+    try { this.#onLoaded?.(this.#record?.id) } catch { /* 通知失敗は本の表示に影響させない */ }
   }
 
   // 読書進捗の取得を開始する。Bibi の読書率は iframe 内 .bibi-nombre-percent に整数%で表示され、

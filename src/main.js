@@ -14,8 +14,15 @@ import { APP_VERSION } from './version.js'
 
 const $ = (id) => document.getElementById(id)
 
+// 「最後に読んでいた本」(端末ローカル)。再起動時に読書画面へ復帰するための保存先。
+// 本文の描画成功時にだけ保存し(壊れた本での再突入ループ防止)、ライブラリに居る間はクリアする。
+const LAST_BOOK_KEY = 'reader.lastBookId'
+const getLastBook = () => { try { return localStorage.getItem(LAST_BOOK_KEY) } catch { return null } }
+const saveLastBook = (id) => { try { if (id) localStorage.setItem(LAST_BOOK_KEY, id) } catch { /* localStorage 不可でも続行 */ } }
+const clearLastBook = () => { try { localStorage.removeItem(LAST_BOOK_KEY) } catch { /* 同上 */ } }
+
 const library = new LibraryView({ onOpen: (id) => openBook(id), onError: (msg) => toast(msg) })
-const reader = new BibiReader({ onBack: () => goLibrary(), onError: (msg) => toast(msg), onNotify: (msg) => toast(msg) })
+const reader = new BibiReader({ onBack: () => goLibrary(), onError: (msg) => toast(msg), onNotify: (msg) => toast(msg), onLoaded: (id) => saveLastBook(id) })
 const syncSettings = new SyncSettingsView()
 
 // ---- 画面切り替え ----
@@ -45,6 +52,7 @@ async function route() {
     await enterReader(id)
   } else {
     reader.hide()
+    clearLastBook() // ライブラリに居る=読書中ではないので復帰対象を消す(現在画面と一致させる)
     showScreen('library')
     await library.refresh()
     // ライブラリへ来るたび裏で同期(読書終了直後の進捗 push と、他端末の変更の pull を兼ねる)。
@@ -173,9 +181,16 @@ async function boot() {
   // 端末間同期用の安定キーを既存レコードへ付与(同期導入前に取り込んだ本への一度きりの移行)。
   await backfillStableKeys().catch((e) => console.warn('安定キーの付与に失敗:', e))
 
-  // 起動時は常にライブラリから開く。前回開いていた本の URL(#read=...)が残っていても、
-  // 読み込めない本に当たって起動時に固まらないよう、フラグメントを消してから描画する。
-  if (/^#read=/.test(location.hash)) history.replaceState(null, '', location.pathname + location.search)
+  // 前回「読書画面のまま」終了/放置していた本があれば、その読書画面から再開する。
+  // iOS PWA はコールド起動で start_url(ハッシュなし)から始まることがあるため、URL ハッシュ任せに
+  // せず localStorage(reader.lastBookId)で復帰先を決める。lastBookId は本文の描画成功時のみ保存され、
+  // 開けない本(欠落/破損)では enterReader が安全にライブラリへ落とす(その際 route がクリアもする)。
+  const resumeId = getLastBook()
+  if (resumeId) {
+    history.replaceState(null, '', '#read=' + encodeURIComponent(resumeId)) // hashchange を出さず route 一回で復帰
+  } else if (/^#read=/.test(location.hash)) {
+    history.replaceState(null, '', location.pathname + location.search) // 復帰対象が無ければ読書ハッシュは消す
+  }
 
   await route()
   // 起動直後に一度同期(route 内のライブラリ経路でも呼ばれるが、syncing ガードで二重実行はされない)。
